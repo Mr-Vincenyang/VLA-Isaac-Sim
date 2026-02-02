@@ -1,0 +1,33 @@
+# Server Training Requirements
+# 远程服务器训练依赖
+
+# Core ML
+torch>=2.1.0
+transformers>=4.36.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0  # INT4/INT8量化
+peft>=0.7.0  # LoRA
+
+# Image processing
+Pillow>=9.0.0
+numpy>=1.24.0
+
+# Data handling
+h5py>=3.10.0
+datasets>=2.14.0
+
+# Training utilities
+tqdm>=4.66.0
+wandb>=0.16.0  # 可选：实验追踪
+tensorboard>=2.15.0
+
+# Web server (for deployment)
+flask>=2.3.0
+gunicorn>=21.0.0
+
+# Config
+pyyaml>=6.0
+omegaconf>=2.3.0
+
+# Optional: Flash Attention for speedup
+# flash-attn>=2.3.0

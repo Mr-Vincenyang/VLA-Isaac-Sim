@@ -1,0 +1,71 @@
+# OpenVLA Training Configuration
+# 服务器训练配置
+
+# Model
+model:
+  name: "openvla/openvla-7b"
+  quantization: null  # null, "4bit", or "8bit"
+  use_flash_attention: false
+
+# LoRA
+lora:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+    - "k_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training
+training:
+  mode: "sft"  # "sft" or "rl"
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 1e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  num_epochs: 3
+  max_steps: -1
+  fp16: true
+  bf16: false
+  gradient_checkpointing: true
+
+# RL specific
+rl:
+  algorithm: "ppo"
+  clip_epsilon: 0.2
+  value_loss_coef: 0.5
+  entropy_coef: 0.01
+  rollout_steps: 2048
+  ppo_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+
+# Data
+data:
+  train_dir: "data/train"
+  val_dir: "data/val"
+  image_size: 224
+  max_seq_length: 2048
+  num_workers: 4
+
+# Logging
+logging:
+  log_steps: 10
+  eval_steps: 100
+  save_steps: 500
+  output_dir: "checkpoints"
+  wandb_project: "openvla-finetune"
+  wandb_run_name: null
+
+# Hardware
+hardware:
+  device: "cuda"
+  num_gpus: 1
+  deepspeed: false
