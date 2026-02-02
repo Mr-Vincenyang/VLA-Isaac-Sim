@@ -1,0 +1,25 @@
+# VLA Server Requirements
+# 远程服务器依赖
+
+# Core ML
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=0.24.0
+bitsandbytes>=0.41.0  # 用于量化
+
+# Image processing
+Pillow>=9.0.0
+numpy>=1.24.0
+
+# Web server
+flask>=2.3.0
+flask-cors>=4.0.0
+gunicorn>=21.0.0  # 生产环境WSGI服务器
+
+# Utilities
+pyyaml>=6.0
+
+# Optional: 用于gRPC支持
+# grpcio>=1.59.0
+# grpcio-tools>=1.59.0
+# protobuf>=4.24.0

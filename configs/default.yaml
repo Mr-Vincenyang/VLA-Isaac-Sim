@@ -1,0 +1,37 @@
+# VLA Platform - Default Configuration
+# 默认配置文件
+
+remote:
+  host: "localhost"
+  port: 8000
+  protocol: "http"
+  timeout: 30.0
+  max_retries: 3
+
+model:
+  model_name: "openvla/openvla-7b"
+  quantization: null
+  max_tokens: 256
+  temperature: 0.0
+  action_dim: 7
+  action_bins: 256
+
+simulation:
+  physics_dt: 0.00833  # 1/120
+  rendering_dt: 0.01667  # 1/60
+  robot_name: "franka"
+  headless: false
+  camera_width: 224
+  camera_height: 224
+  camera_position: [0.5, 0.0, 0.5]
+  camera_target: [0.0, 0.0, 0.0]
+
+control:
+  control_mode: "joint"
+  control_frequency: 100.0
+  kp: [600, 600, 600, 600, 250, 150, 50]
+  kd: [50, 50, 50, 50, 30, 25, 15]
+  impedance_stiffness: [400, 400, 400, 40, 40, 40]
+  impedance_damping: [40, 40, 40, 4, 4, 4]
+  max_velocity: 1.0
+  max_acceleration: 2.0

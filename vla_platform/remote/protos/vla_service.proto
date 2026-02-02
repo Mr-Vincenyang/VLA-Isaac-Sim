@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package vla_service;
+
+// VLA推理服务定义
+service VLAService {
+    // 单次预测
+    rpc Predict(PredictRequest) returns (PredictResponse);
+    
+    // 批量预测
+    rpc BatchPredict(BatchPredictRequest) returns (BatchPredictResponse);
+    
+    // 获取模型信息
+    rpc GetModelInfo(Empty) returns (ModelInfoResponse);
+    
+    // 健康检查
+    rpc HealthCheck(Empty) returns (HealthResponse);
+    
+    // 流式预测 (用于低延迟场景)
+    rpc StreamPredict(stream PredictRequest) returns (stream PredictResponse);
+}
+
+message Empty {}
+
+// 预测请求
+message PredictRequest {
+    bytes image = 1;                    // PNG/JPEG编码的图像
+    string instruction = 2;             // 语言指令
+    optional string model_name = 3;     // 可选的模型名称
+    
+    // 可选的机器人状态
+    repeated float joint_positions = 4;
+    repeated float ee_position = 5;
+    optional float gripper_state = 6;
+    
+    // 推理参数
+    optional float temperature = 7;
+    optional int32 max_tokens = 8;
+}
+
+// 预测响应
+message PredictResponse {
+    repeated float action = 1;          // 7维动作向量
+    string action_type = 2;             // 动作类型
+    float inference_time_ms = 3;        // 推理时间(毫秒)
+    optional string error = 4;          // 错误信息
+}
+
+// 批量预测请求
+message BatchPredictRequest {
+    repeated PredictRequest requests = 1;
+}
+
+// 批量预测响应
+message BatchPredictResponse {
+    repeated PredictResponse responses = 1;
+}
+
+// 模型信息响应
+message ModelInfoResponse {
+    string model_name = 1;
+    string model_version = 2;
+    int32 action_dim = 3;
+    int32 action_bins = 4;
+    repeated string supported_instructions = 5;
+    string device = 6;
+    string quantization = 7;
+}
+
+// 健康检查响应
+message HealthResponse {
+    bool is_healthy = 1;
+    string status = 2;
+    float gpu_memory_used_gb = 3;
+    float gpu_memory_total_gb = 4;
+}

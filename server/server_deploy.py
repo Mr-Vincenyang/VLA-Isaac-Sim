@@ -1,0 +1,314 @@
+# VLA Server Deployment Script
+"""
+远程服务器VLA模型部署脚本
+
+使用方法:
+    python server_deploy.py --model openvla/openvla-7b --port 8000
+    
+依赖:
+    pip install -r requirements_server.txt
+"""
+import argparse
+import logging
+from pathlib import Path
+from typing import Optional
+import base64
+from io import BytesIO
+
+import numpy as np
+from PIL import Image
+from flask import Flask, request, jsonify
+import torch
+
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+
+# 全局模型变量
+model = None
+processor = None
+device = None
+
+
+def load_model(
+    model_name: str = "openvla/openvla-7b",
+    quantization: Optional[str] = None,
+    device_map: str = "auto"
+):
+    """
+    加载VLA模型
+    
+    Args:
+        model_name: HuggingFace模型名称
+        quantization: 量化选项 ("int4", "int8", None)
+        device_map: 设备映射策略
+    """
+    global model, processor, device
+    
+    logger.info(f"Loading model: {model_name}")
+    
+    try:
+        from transformers import AutoModelForVision2Seq, AutoProcessor
+        
+        # 配置量化
+        load_kwargs = {
+            "device_map": device_map,
+            "torch_dtype": torch.bfloat16,
+        }
+        
+        if quantization == "int8":
+            load_kwargs["load_in_8bit"] = True
+        elif quantization == "int4":
+            load_kwargs["load_in_4bit"] = True
+        
+        # 加载模型和处理器
+        processor = AutoProcessor.from_pretrained(
+            model_name, 
+            trust_remote_code=True
+        )
+        model = AutoModelForVision2Seq.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            **load_kwargs
+        )
+        
+        device = next(model.parameters()).device
+        logger.info(f"Model loaded on device: {device}")
+        
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        raise
+
+
+def decode_image(image_data: str) -> Image.Image:
+    """解码Base64图像"""
+    image_bytes = base64.b64decode(image_data)
+    return Image.open(BytesIO(image_bytes)).convert("RGB")
+
+
+def predict_action(
+    image: Image.Image,
+    instruction: str,
+    temperature: float = 0.0,
+    **kwargs
+) -> np.ndarray:
+    """
+    预测机器人动作
+    
+    Args:
+        image: 输入图像
+        instruction: 语言指令
+        temperature: 采样温度
+        
+    Returns:
+        7维动作向量
+    """
+    global model, processor, device
+    
+    if model is None or processor is None:
+        raise RuntimeError("Model not loaded")
+    
+    # 预处理
+    inputs = processor(
+        images=image,
+        text=instruction,
+        return_tensors="pt"
+    ).to(device)
+    
+    # 推理
+    with torch.no_grad():
+        if temperature == 0:
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,
+            )
+        else:
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=True,
+                temperature=temperature,
+            )
+    
+    # 解码动作
+    # OpenVLA输出格式: 7个动作token
+    action_tokens = outputs[0, -7:]
+    action = processor.decode_action(action_tokens)
+    
+    return action
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """健康检查端点"""
+    is_healthy = model is not None
+    
+    response = {
+        "is_healthy": is_healthy,
+        "status": "running" if is_healthy else "model_not_loaded"
+    }
+    
+    if is_healthy and torch.cuda.is_available():
+        response["gpu_memory_used_gb"] = torch.cuda.memory_allocated() / 1e9
+        response["gpu_memory_total_gb"] = torch.cuda.get_device_properties(0).total_memory / 1e9
+    
+    return jsonify(response)
+
+
+@app.route('/model_info', methods=['GET'])
+def model_info():
+    """获取模型信息"""
+    if model is None:
+        return jsonify({"error": "Model not loaded"}), 500
+    
+    return jsonify({
+        "model_name": getattr(model.config, "_name_or_path", "unknown"),
+        "action_dim": 7,
+        "action_bins": 256,
+        "device": str(device),
+    })
+
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    """
+    预测端点
+    
+    请求格式:
+    {
+        "image": "<base64编码的图像>",
+        "instruction": "pick up the red block",
+        "temperature": 0.0  (可选)
+    }
+    
+    响应格式:
+    {
+        "action": [7个浮点数],
+        "action_type": "delta_ee"
+    }
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        data = request.get_json()
+        
+        # 解析输入
+        image_data = data.get("image")
+        instruction = data.get("instruction", "")
+        temperature = data.get("temperature", 0.0)
+        
+        if not image_data:
+            return jsonify({"error": "Missing image"}), 400
+        if not instruction:
+            return jsonify({"error": "Missing instruction"}), 400
+        
+        # 解码图像
+        image = decode_image(image_data)
+        
+        # 预测
+        action = predict_action(
+            image,
+            instruction,
+            temperature=temperature
+        )
+        
+        inference_time = (time.time() - start_time) * 1000
+        
+        response = {
+            "action": action.tolist() if isinstance(action, np.ndarray) else action,
+            "action_type": "delta_ee",
+            "inference_time_ms": inference_time
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/batch_predict', methods=['POST'])
+def batch_predict():
+    """批量预测端点"""
+    try:
+        data = request.get_json()
+        requests_data = data.get("requests", [])
+        
+        results = []
+        for req in requests_data:
+            image = decode_image(req.get("image"))
+            instruction = req.get("instruction", "")
+            
+            action = predict_action(image, instruction)
+            results.append({
+                "action": action.tolist() if isinstance(action, np.ndarray) else action,
+                "action_type": "delta_ee"
+            })
+        
+        return jsonify({"results": results})
+        
+    except Exception as e:
+        logger.error(f"Batch prediction error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def main():
+    parser = argparse.ArgumentParser(description="VLA Model Server")
+    parser.add_argument(
+        "--model", 
+        type=str, 
+        default="openvla/openvla-7b",
+        help="Model name or path"
+    )
+    parser.add_argument(
+        "--port", 
+        type=int, 
+        default=8000,
+        help="Server port"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Server host"
+    )
+    parser.add_argument(
+        "--quantization",
+        type=str,
+        choices=["int4", "int8", "none"],
+        default="none",
+        help="Quantization option"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode"
+    )
+    
+    args = parser.parse_args()
+    
+    # 加载模型
+    quantization = None if args.quantization == "none" else args.quantization
+    load_model(
+        model_name=args.model,
+        quantization=quantization
+    )
+    
+    # 启动服务器
+    logger.info(f"Starting server at {args.host}:{args.port}")
+    app.run(
+        host=args.host,
+        port=args.port,
+        debug=args.debug
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,22 @@
+# VLA Platform - 本地依赖
+# 在Isaac Sim conda环境中安装
+
+# HTTP Client
+requests>=2.28.0
+Pillow>=9.0.0
+
+# Data Processing
+numpy>=1.24.0
+pyyaml>=6.0
+
+# Optional: gRPC support
+# grpcio>=1.59.0
+# grpcio-tools>=1.59.0
+# protobuf>=4.24.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Note: Isaac Sim related packages come from the Isaac Sim installation
+# Do not install torch or other ML packages that conflict with Isaac Sim
