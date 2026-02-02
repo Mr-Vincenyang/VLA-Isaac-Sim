@@ -1,22 +1,47 @@
-# VLA Platform - 本地依赖
-# 在Isaac Sim conda环境中安装
+# VLA Platform - 完整依赖列表
+# ================================
+# 本地Isaac Sim环境依赖
 
-# HTTP Client
-requests>=2.28.0
-Pillow>=9.0.0
-
-# Data Processing
+# ============== 核心依赖 ==============
 numpy>=1.24.0
 pyyaml>=6.0
+Pillow>=9.0.0
 
-# Optional: gRPC support
-# grpcio>=1.59.0
-# grpcio-tools>=1.59.0
-# protobuf>=4.24.0
+# ============== 网络通信 ==============
+requests>=2.28.0
+# grpcio>=1.59.0  # 可选：gRPC支持
+# grpcio-tools>=1.59.0  # 可选：gRPC proto编译
+# protobuf>=4.24.0  # 可选：Protocol Buffers
 
-# Testing
+# ============== 机器学习 ==============
+# 注意：torch 由 Isaac Sim/Isaac Lab 环境提供
+# 不要在此安装torch，会与Isaac Sim冲突
+transformers>=4.36.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0  # INT4/INT8量化
+peft>=0.7.0  # LoRA高效微调
+
+# ============== 数据处理 ==============
+h5py>=3.10.0  # HDF5数据存储
+# datasets>=2.14.0  # 可选：HuggingFace datasets
+
+# ============== 可视化和日志 ==============
+tqdm>=4.66.0
+# tensorboard>=2.15.0  # 可选：训练可视化
+# wandb>=0.16.0  # 可选：实验追踪
+
+# ============== 测试 ==============
 pytest>=7.4.0
 pytest-cov>=4.1.0
 
-# Note: Isaac Sim related packages come from the Isaac Sim installation
-# Do not install torch or other ML packages that conflict with Isaac Sim
+# ============== Isaac Sim 相关 ==============
+# 以下包由 Isaac Sim / Isaac Lab 环境提供，无需手动安装：
+# - omni.isaac.core
+# - omni.isaac.franka
+# - omni.isaac.sensor
+# - omni.replicator.core
+
+# ============== 可选：高级功能 ==============
+# scipy>=1.11.0  # 科学计算，轨迹优化
+# roboticstoolbox-python>=1.0.0  # 机器人学工具
+# spatialmath-python>=1.0.0  # 空间数学
