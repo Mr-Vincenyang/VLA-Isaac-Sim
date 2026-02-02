@@ -18,7 +18,7 @@ except ImportError:
     ISAAC_SIM_AVAILABLE = False
     Camera = None
 
-from ..core.base_interfaces import SensorInterface
+from vla_platform.core.base_interfaces import SensorInterface
 
 logger = logging.getLogger(__name__)
 

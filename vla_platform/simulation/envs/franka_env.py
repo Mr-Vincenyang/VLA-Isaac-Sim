@@ -23,9 +23,9 @@ except ImportError:
     ISAAC_SIM_AVAILABLE = False
     Franka = None
 
-from ..core.base_interfaces import RobotController, Observation, Action
-from ..core.config import SimulationConfig
-from .sim_manager import SimulationManager
+from vla_platform.core.base_interfaces import RobotController, Observation, Action
+from vla_platform.core.config import SimulationConfig
+from vla_platform.simulation.sim_manager import SimulationManager
 
 logger = logging.getLogger(__name__)
 

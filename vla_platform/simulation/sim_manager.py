@@ -3,8 +3,13 @@
 Isaac Sim仿真环境管理器
 负责创建和管理仿真世界、物理步进、渲染等
 """
+from __future__ import annotations
+
 import numpy as np
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from omni.isaac.core.prims import XFormPrim
 from pathlib import Path
 import logging
 
