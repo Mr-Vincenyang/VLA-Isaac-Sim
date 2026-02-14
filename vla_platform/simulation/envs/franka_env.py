@@ -8,20 +8,46 @@ from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass, field
 import logging
 
+# Isaac Sim imports - 支持新旧两种命名空间
+ISAAC_SIM_AVAILABLE = False
+Franka = None
+RigidPrim = None
+XFormPrim = None
+DynamicCuboid = None
+ArticulationView = None
+prim_utils = None
+get_assets_root_path = None
+
+# 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
 try:
-    from omni.isaac.core import World
-    from omni.isaac.core.robots import Robot
-    from omni.isaac.core.utils.stage import add_reference_to_stage
-    from omni.isaac.core.utils.nucleus import get_assets_root_path
-    from omni.isaac.core.prims import RigidPrim, XFormPrim
-    from omni.isaac.core.objects import DynamicCuboid
-    from omni.isaac.franka import Franka
-    from omni.isaac.core.articulations import ArticulationView
-    import omni.isaac.core.utils.prims as prim_utils
+    from isaacsim.core.api import World
+    from isaacsim.core.utils.stage import add_reference_to_stage
+    from isaacsim.core.utils.nucleus import get_assets_root_path
+    from isaacsim.core.prims import SingleRigidPrim as RigidPrim, SingleXFormPrim as XFormPrim
+    from isaacsim.core.api.objects import DynamicCuboid
+    # Fix: 正确的导入路径是 isaacsim.robot.manipulators.examples.franka
+    from isaacsim.robot.manipulators.examples.franka import Franka
+    from isaacsim.core.prims import ArticulationView
+    import isaacsim.core.utils.prims as prim_utils
     ISAAC_SIM_AVAILABLE = True
 except ImportError:
-    ISAAC_SIM_AVAILABLE = False
-    Franka = None
+    pass
+
+# 尝试旧的 omni.isaac 命名空间 (兼容性)
+if not ISAAC_SIM_AVAILABLE:
+    try:
+        from omni.isaac.core import World
+        from omni.isaac.core.robots import Robot
+        from omni.isaac.core.utils.stage import add_reference_to_stage
+        from omni.isaac.core.utils.nucleus import get_assets_root_path
+        from omni.isaac.core.prims import RigidPrim, XFormPrim
+        from omni.isaac.core.objects import DynamicCuboid
+        from omni.isaac.franka import Franka
+        from omni.isaac.core.articulations import ArticulationView
+        import omni.isaac.core.utils.prims as prim_utils
+        ISAAC_SIM_AVAILABLE = True
+    except ImportError:
+        pass
 
 from vla_platform.core.base_interfaces import RobotController, Observation, Action
 from vla_platform.core.config import SimulationConfig
@@ -141,11 +167,27 @@ class FrankaGraspEnv(RobotController):
         """添加桌子"""
         table_prim_path = "/World/Table"
         
+        # 计算桌子位置 (3D)
+        table_pos = [
+            self.config.table_position[0],
+            self.config.table_position[1],
+            self.config.table_size[2] / 2  # z轴位置
+        ]
+        
+        # Isaac Sim 5.x: size 是标量，用 scale 调整不同方向的尺寸
+        base_size = 1.0  # 基础边长
+        scale = np.array([
+            self.config.table_size[0] / base_size,
+            self.config.table_size[1] / base_size,
+            self.config.table_size[2] / base_size
+        ])
+        
         self._table = DynamicCuboid(
             prim_path=table_prim_path,
             name="table",
-            position=np.array(self.config.table_position + [self.config.table_size[2] / 2]),
-            size=np.array(self.config.table_size),
+            position=np.array(table_pos),
+            size=base_size,  # 标量
+            scale=scale,
             color=np.array([0.5, 0.35, 0.2]),  # 木色
             mass=1000.0  # 重量很大使其固定
         )
@@ -163,8 +205,8 @@ class FrankaGraspEnv(RobotController):
             y = np.random.uniform(*self.config.workspace_y)
             z = self.config.table_size[2] + 0.05  # 桌面上方
             
-            # 随机大小
-            size = np.random.uniform(*self.config.object_size_range)
+            # 随机大小 (标量)
+            size = float(np.random.uniform(*self.config.object_size_range))
             
             # 颜色
             color = self.config.object_colors[i % len(self.config.object_colors)]
@@ -173,7 +215,7 @@ class FrankaGraspEnv(RobotController):
                 prim_path=f"/World/Object_{i}",
                 name=f"object_{i}",
                 position=np.array([x, y, z]),
-                size=np.array([size, size, size]),
+                size=size,  # 标量浮点数
                 color=np.array(color),
                 mass=0.1
             )

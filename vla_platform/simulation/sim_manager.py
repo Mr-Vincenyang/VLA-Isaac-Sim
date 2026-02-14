@@ -9,22 +9,42 @@ import numpy as np
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from omni.isaac.core.prims import XFormPrim
+    pass  # Type hints handled below
 from pathlib import Path
 import logging
 
-# Isaac Sim imports - 这些需要在Isaac Sim环境中运行
+# Isaac Sim imports - 支持新旧两种命名空间
+ISAAC_SIM_AVAILABLE = False
+World = None
+Scene = None
+XFormPrim = None
+add_reference_to_stage = None
+get_assets_root_path = None
+
+# 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
 try:
-    from omni.isaac.core import World
-    from omni.isaac.core.utils.stage import add_reference_to_stage
-    from omni.isaac.core.utils.nucleus import get_assets_root_path
-    from omni.isaac.core.prims import XFormPrim
-    from omni.isaac.core.scenes import Scene
+    from isaacsim.core.api import World
+    from isaacsim.core.utils.stage import add_reference_to_stage
+    from isaacsim.core.utils.nucleus import get_assets_root_path
+    from isaacsim.core.prims import SingleXFormPrim as XFormPrim
+    from isaacsim.core.api.scenes import Scene
     import omni.usd
     ISAAC_SIM_AVAILABLE = True
 except ImportError:
-    ISAAC_SIM_AVAILABLE = False
-    World = None
+    pass
+
+# 尝试旧的 omni.isaac 命名空间 (兼容性)
+if not ISAAC_SIM_AVAILABLE:
+    try:
+        from omni.isaac.core import World
+        from omni.isaac.core.utils.stage import add_reference_to_stage
+        from omni.isaac.core.utils.nucleus import get_assets_root_path
+        from omni.isaac.core.prims import XFormPrim
+        from omni.isaac.core.scenes import Scene
+        import omni.usd
+        ISAAC_SIM_AVAILABLE = True
+    except ImportError:
+        pass
 
 from ..core.config import SimulationConfig
 

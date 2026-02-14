@@ -20,6 +20,107 @@
 └────────────────┘              └────────────────┘
 ```
 
+## 环境要求
+
+### 系统要求
+
+- **操作系统**: Ubuntu 20.04/22.04 LTS
+- **GPU**: NVIDIA GPU (RTX 3070或更高，显存8GB+)
+- **内存**: 32GB RAM 推荐
+- **Python**: 3.11 (与Isaac Sim内置Python版本一致)
+- **Isaac Sim**: 5.1.0
+
+### Isaac Sim 安装验证
+
+在开始使用本项目前，请确保您的Isaac Sim 5.1.0已正确安装。
+
+#### 1. 检查Isaac Sim版本
+
+```bash
+# 查看安装的Isaac Sim版本
+cat /home/vincent/isaac-sim/VERSION
+# 预期输出: 5.1.0-rc.19+release.26219.9c81211b.gl
+```
+
+#### 2. 运行安装验证脚本
+
+我们提供了验证脚本来检查Isaac Sim是否安装正确：
+
+```bash
+# 方法1: 使用系统Python检查安装状态（仅检查文件）
+python3 check_isaac_sim.py
+
+# 方法2: 使用Isaac Sim Python运行完整功能测试（推荐）
+cd /home/vincent/isaac-sim
+./python.sh /home/vincent/Desktop/code/VLA/verify_isaac_sim.py
+```
+
+#### 3. 验证测试内容
+
+验证脚本将检查以下内容：
+
+| 检查项目 | 说明 |
+|---------|------|
+| SimulationApp | Isaac Sim应用启动 |
+| World模块 | 仿真世界创建与管理 |
+| Franka机器人 | 机械臂模型加载与控制 |
+| Camera相机 | RGB/深度相机传感器 |
+| DynamicCuboid | 动态物体创建 |
+
+**预期输出**:
+```
+============================================================
+Isaac Sim 5.1.0 基础验证
+============================================================
+
+[1/5] 检查 SimulationApp...
+✓ SimulationApp 可导入
+
+[2/5] 启动 SimulationApp...
+✓ SimulationApp 启动成功
+
+[3/5] 检查核心模块...
+✓ isaacsim.core.api.World
+✓ isaacsim.sensors.camera.Camera
+✓ isaacsim.robot.manipulators.examples.franka.Franka
+✓ isaacsim.core.api.objects.DynamicCuboid
+
+模块检查: 4/4 通过
+
+[4/5] 测试 World 创建...
+✓ World 创建成功
+
+[5/5] 测试 Franka 机器人...
+✓ Franka 创建成功 (DOF: 9)
+
+🎉 所有测试通过！Isaac Sim 5.1.0 工作正常
+```
+
+#### 4. 常见问题
+
+**问题1**: 模块导入失败 (`No module named 'isaacsim'`)
+
+**解决**: 必须使用Isaac Sim自带的Python运行
+```bash
+# 错误
+python3 your_script.py
+
+# 正确
+cd /home/vincent/isaac-sim
+./python.sh your_script.py
+```
+
+**问题2**: 无法启动SimulationApp
+
+**解决**: 检查GPU驱动和CUDA
+```bash
+# 检查NVIDIA驱动
+nvidia-smi
+
+# 检查CUDA
+nvcc --version
+```
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -50,15 +151,33 @@ python server/server_deploy.py --model openvla/openvla-7b --quantization int8
 
 ### 3. 运行演示
 
+⚠️ **重要**: 所有演示脚本必须使用Isaac Sim自带的Python运行！
+
 **VLA抓取演示**:
 ```bash
-# 在Isaac Sim Python环境中
-python demos/demo_vla_grasp.py --server http://your-server:8000
+# 切换到Isaac Sim目录并运行
+cd /home/vincent/isaac-sim
+./python.sh /home/vincent/Desktop/code/VLA/demos/demo_vla_grasp.py --server http://your-server:8000
 ```
 
 **运动控制演示**:
 ```bash
-python demos/demo_motion_control.py --demo all
+cd /home/vincent/isaac-sim
+./python.sh /home/vincent/Desktop/code/VLA/demos/demo_motion_control.py --demo all
+```
+
+**使用Conda环境（可选）**:
+```bash
+# 创建Python 3.11环境
+conda create -n isaacsim python=3.11 -y
+conda activate isaacsim
+
+# 设置Isaac Sim环境
+cd /home/vincent/isaac-sim
+source setup_conda_env.sh
+
+# 现在可以直接使用python命令
+python /home/vincent/Desktop/code/VLA/demos/demo_vla_grasp.py --server http://your-server:8000
 ```
 
 ## 项目结构
@@ -75,6 +194,44 @@ VLA/
 ├── demos/                  # 演示脚本
 ├── configs/                # 配置文件
 └── tests/                  # 单元测试
+```
+
+## Isaac Sim 5.1.0 API 兼容性
+
+本项目已针对 **Isaac Sim 5.1.0** 进行优化和修复，使用了新的 `isaacsim` 命名空间。
+
+### 主要API变更
+
+| 旧API (Isaac Sim 4.x) | 新API (Isaac Sim 5.1.0) | 说明 |
+|---------------------|-----------------------|------|
+| `omni.isaac.core.World` | `isaacsim.core.api.World` | 仿真世界管理 |
+| `omni.isaac.sensor.Camera` | `isaacsim.sensors.camera.Camera` | 相机传感器 |
+| `omni.isaac.franka.Franka` | `isaacsim.robot.manipulators.examples.franka.Franka` | Franka机器人 |
+| `omni.isaac.core.objects.DynamicCuboid` | `isaacsim.core.api.objects.DynamicCuboid` | 动态立方体 |
+
+### 向后兼容
+
+代码中包含了新旧命名空间的双重导入支持：
+
+```python
+# 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
+try:
+    from isaacsim.core.api import World
+    from isaacsim.sensors.camera import Camera
+    from isaacsim.robot.manipulators.examples.franka import Franka
+    ISAAC_SIM_AVAILABLE = True
+except ImportError:
+    pass
+
+# 尝试旧的 omni.isaac 命名空间 (兼容性)
+if not ISAAC_SIM_AVAILABLE:
+    try:
+        from omni.isaac.core import World
+        from omni.isaac.sensor import Camera
+        from omni.isaac.franka import Franka
+        ISAAC_SIM_AVAILABLE = True
+    except ImportError:
+        pass
 ```
 
 ## 核心模块
@@ -107,6 +264,38 @@ trajectory = planner.interpolate(waypoints, dt=0.01)
 from vla_platform.control import ImpedanceController
 controller = ImpedanceController()
 wrench = controller.compute(current_pose, target_pose, ...)
+```
+
+## 测试脚本
+
+本项目包含以下测试脚本，用于验证环境和功能：
+
+### 1. Isaac Sim 安装验证
+
+**文件**: `check_isaac_sim.py`
+
+用途：检查Isaac Sim是否已正确安装，不需要启动GUI
+
+```bash
+python3 check_isaac_sim.py
+```
+
+### 2. Isaac Sim 功能测试
+
+**文件**: `verify_isaac_sim.py`
+
+用途：运行完整的Isaac Sim功能测试（包括World创建、Franka机器人、相机传感器）
+
+```bash
+cd /home/vincent/isaac-sim
+./python.sh /home/vincent/Desktop/code/VLA/verify_isaac_sim.py
+```
+
+### 3. 项目单元测试
+
+```bash
+cd /home/vincent/isaac-sim
+./python.sh -m pytest /home/vincent/Desktop/code/VLA/tests/ -v
 ```
 
 ## 面试项目亮点

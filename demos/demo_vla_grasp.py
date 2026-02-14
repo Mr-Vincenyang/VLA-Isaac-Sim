@@ -91,7 +91,7 @@ class VLAGraspDemo:
         self.sim_manager = SimulationManager(self.config.simulation)
         self.sim_manager.create_world()
         
-        # 2. 设置相机
+        # 2. 设置相机（在world创建后，传入world实例）
         logger.info("Setting up camera...")
         camera_config = CameraConfig(
             width=224,
@@ -101,7 +101,8 @@ class VLAGraspDemo:
         )
         self.camera = CameraManager(
             prim_path="/World/Camera/overhead",
-            config=camera_config
+            config=camera_config,
+            world=self.sim_manager.world  # Fix: 传入world实例以便添加到scene
         )
         
         # 3. 创建Franka环境
