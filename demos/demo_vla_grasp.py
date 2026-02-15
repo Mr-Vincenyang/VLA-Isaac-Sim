@@ -181,62 +181,25 @@ class VLAGraspDemo:
         """设置视口相机以便查看机器人和场景"""
         try:
             import numpy as np
+            from isaacsim.core.utils.viewports import set_camera_view
             
-            # 使用World的set_camera_view方法 (Isaac Sim 5.1.0 API)
             # 从斜上方查看机器人和桌子
-            eye_pos = np.array([1.2, -0.8, 0.9])  # 相机位置
-            target_pos = np.array([0.4, 0.0, 0.1])  # 看桌子中心
+            eye_pos = (1.5, -1.0, 1.0)  # 相机位置 (tuple格式)
+            target_pos = (0.4, 0.0, 0.2)  # 看桌子中心
             
-            # 通过world设置相机视角
-            if self.sim_manager.world is not None:
-                # 方法1: 使用world的camera属性 (如果存在)
-                if hasattr(self.sim_manager.world, '_camera_controller'):
-                    self.sim_manager.world._camera_controller.set_view_env_index(0)
-                
-                # 方法2: 使用omni.kit.viewport直接设置
-                import omni.kit.viewport.utility as viewport_utils
-                viewport_api = viewport_utils.get_active_viewport()
-                if viewport_api is not None:
-                    # 获取当前的相机prim
-                    camera_path = viewport_api.get_active_camera()
-                    if camera_path:
-                        # 使用USD设置相机位置
-                        import omni.usd
-                        stage = omni.usd.get_context().get_stage()
-                        camera_prim = stage.GetPrimAtPath(camera_path)
-                        if camera_prim:
-                            from pxr import Gf
-                            # 计算look-at矩阵
-                            eye = Gf.Vec3d(eye_pos[0], eye_pos[1], eye_pos[2])
-                            target = Gf.Vec3d(target_pos[0], target_pos[1], target_pos[2])
-                            up = Gf.Vec3d(0, 0, 1)
-                            
-                            # 计算相机变换
-                            forward = (target - eye).GetNormalized()
-                            right = Gf.Cross(forward, up).GetNormalized()
-                            up = Gf.Cross(right, forward)
-                            
-                            # 构建变换矩阵
-                            transform = Gf.Matrix4d(
-                                right[0], right[1], right[2], 0,
-                                up[0], up[1], up[2], 0,
-                                -forward[0], -forward[1], -forward[2], 0,
-                                eye[0], eye[1], eye[2], 1
-                            )
-                            
-                            # 设置到xformOp
-                            xform = camera_prim.GetAttribute('xformOp:transform')
-                            if xform:
-                                xform.Set(transform)
-                            else:
-                                # 创建xformOp
-                                from pxr import UsdGeom
-                                xformable = UsdGeom.Xformable(camera_prim)
-                                xformable.AddTransformOp().Set(transform)
-                            
-                            logger.info(f"Viewport camera set to position {eye_pos}, looking at {target_pos}")
+            # 使用Isaac Sim官方API设置视口相机
+            set_camera_view(eye_pos, target_pos, camera_prim_path="/OmniverseKit_Persp")
+            logger.info(f"✓ Viewport camera set: eye={eye_pos}, target={target_pos}")
+                    
         except Exception as e:
             logger.warning(f"Could not set viewport camera: {e}")
+            # 备用：尝试直接导入
+            try:
+                from isaacsim.core.utils.viewports import set_camera_view
+                set_camera_view((1.5, -1.0, 1.0), (0.4, 0.0, 0.2))
+                logger.info("✓ Viewport camera set (fallback)")
+            except Exception as e2:
+                logger.warning(f"Fallback also failed: {e2}")
     
     def run_episode(
         self,
