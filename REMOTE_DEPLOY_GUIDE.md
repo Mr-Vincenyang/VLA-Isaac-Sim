@@ -199,6 +199,7 @@ cd ~/isaac-sim
 ```bash
 # 将远程服务器的8000端口转发到本地的8000端口
 ssh -L 8000:localhost:8000 root@sh01-ssh.gpuhome.cc -p 30046
+ssh -L 8080:localhost:8000 root@connect.bjb2.seetacloud.com -p 10313
 ```
 
 **参数说明**:

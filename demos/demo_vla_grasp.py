@@ -20,6 +20,18 @@ import sys
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# 首先启动Isaac Sim SimulationApp（必须在其他isaacsim模块之前）
+print("Starting Isaac Sim SimulationApp...")
+try:
+    from isaacsim import SimulationApp
+    simulation_app = SimulationApp({"headless": False})
+    print("✓ SimulationApp started successfully")
+except Exception as e:
+    print(f"✗ Failed to start SimulationApp: {e}")
+    print("Please run this script in Isaac Sim Python environment:")
+    print("  ./python.sh demos/demo_vla_grasp.py")
+    sys.exit(1)
+
 import numpy as np
 
 from vla_platform.core.config import PlatformConfig, RemoteServerConfig
@@ -80,10 +92,14 @@ class VLAGraspDemo:
         """设置仿真环境和连接"""
         logger.info("Setting up VLA Grasp Demo...")
         
-        # 检查Isaac Sim
-        if not check_isaac_sim_available():
+        # 检查Isaac Sim（尝试导入SimulationApp验证）
+        try:
+            from isaacsim import SimulationApp
+            logger.info("✓ Isaac Sim environment verified")
+        except ImportError:
             raise RuntimeError(
-                "Isaac Sim not available. Please run this script in Isaac Sim environment."
+                "Isaac Sim not available. Please run this script in Isaac Sim environment.\n"
+                "Use: ./python.sh demo_vla_grasp.py"
             )
         
         # 1. 创建仿真管理器

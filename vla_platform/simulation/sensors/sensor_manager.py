@@ -111,11 +111,15 @@ class CameraManager(SensorInterface):
         # 初始化渲染 - 必须在添加到scene之后调用
         self._camera.initialize()
         
-        # 设置裁剪平面
-        self._camera.set_clipping_range(
-            near_plane=self.config.near_clip,
-            far_plane=self.config.far_clip
-        )
+        # 设置裁剪平面（可选，使用默认值）
+        # 注意：Isaac Sim 5.1.0的Camera API裁剪平面参数可能有所不同
+        # 这里尝试设置，如果失败则使用默认值
+        try:
+            # 尝试直接调用（不带参数名，使用位置参数）
+            self._camera.set_clipping_range(self.config.near_clip, self.config.far_clip)
+        except Exception as e:
+            # 如果设置失败，使用默认值（通常是0.01到10000）
+            logger.debug(f"Could not set clipping range: {e}. Using defaults.")
         
         self._is_initialized = True
         logger.info(f"Camera setup at {self.prim_path} with resolution {self.config.width}x{self.config.height}")

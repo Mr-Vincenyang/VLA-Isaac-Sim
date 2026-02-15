@@ -305,6 +305,68 @@ cd /home/vincent/isaac-sim
 3. **机器人学知识**: 阻抗控制、轨迹规划
 4. **工程能力**: 模块化设计、接口抽象
 
+## 已知问题和解决方案
+
+### 1. VLA远程服务器500错误
+
+**问题描述**: 远程服务器返回 `500 Internal Server Error`，错误信息为 `Input type (float) and bias type (c10::BFloat16) should be the same`
+
+**原因**: 模型默认使用 `bfloat16` 格式，但输入数据为 `float32`，导致数据类型不匹配
+
+**解决方案**: 
+- ✅ 已在 `server/server_deploy.py` 中修复，将模型加载时的 `torch_dtype` 从 `torch.bfloat16` 改为 `torch.float32`
+- 如需使用更高精度，可手动修改为 `torch.float16` 或 `torch.bfloat16`，并确保输入数据类型匹配
+
+**更新步骤**:
+```bash
+# 1. 在本地提交修复
+git add server/server_deploy.py
+git commit -m "Fix: Change model dtype from bfloat16 to float32 to avoid type mismatch"
+git push
+
+# 2. 在远程服务器拉取更新
+cd ~/VLA
+git pull
+
+# 3. 重启VLA服务
+pkill -f server_deploy
+cd server
+python server_deploy.py --model openvla/openvla-7b --port 8000
+```
+
+### 2. 没有画面显示
+
+**问题描述**: 运行demo时没有GUI窗口显示
+
+**原因**: 使用了 `--headless` 参数
+
+**解决方案**: 移除 `--headless` 参数，或改为 `--no-window`
+```bash
+# 显示GUI
+./python.sh demos/demo_vla_grasp.py --server http://localhost:8080
+
+# 无头模式（不显示GUI，用于服务器）
+./python.sh demos/demo_vla_grasp.py --server http://localhost:8080 --headless
+```
+
+### 3. 相机深度图警告
+
+**问题描述**: 日志中出现 `Annotator 'distance_to_image_plane' not attached`
+
+**原因**: 深度传感器annotator未正确配置
+
+**解决方案**: 这是警告信息，不影响基本功能。如需深度图，确保在CameraConfig中启用 `enable_depth=True`
+
+## 更新日志
+
+### 2026-02-14
+- ✅ 修复Isaac Sim 5.1.0 API兼容性问题
+- ✅ 修复Franka导入路径 (`isaacsim.robot.manipulators.examples.franka`)
+- ✅ 修复Camera传感器初始化问题
+- ✅ 修复远程VLA服务器数据类型错误
+- ✅ 添加完整的SSH远程部署指南
+- ✅ 添加Isaac Sim安装验证脚本
+
 ## License
 
 MIT

@@ -56,15 +56,28 @@ def load_model(
         from transformers import AutoModelForVision2Seq, AutoProcessor
         
         # 配置量化
-        load_kwargs = {
-            "device_map": device_map,
-            "torch_dtype": torch.bfloat16,
-        }
-        
+        # 注意：不使用bfloat16以避免数据类型不匹配问题
+        # 使用float32确保兼容性，或根据量化选项调整
         if quantization == "int8":
-            load_kwargs["load_in_8bit"] = True
+            load_kwargs = {
+                "device_map": device_map,
+                "torch_dtype": torch.float32,  # int8量化时使用float32
+                "load_in_8bit": True,
+            }
         elif quantization == "int4":
-            load_kwargs["load_in_4bit"] = True
+            load_kwargs = {
+                "device_map": device_map,
+                "torch_dtype": torch.float32,  # int4量化时使用float32
+                "load_in_4bit": True,
+            }
+        else:
+            # 无量化时使用float32以确保兼容性
+            # 如果显存充足，可以使用torch.float16或torch.bfloat16
+            # 但为避免数据类型错误，默认使用float32
+            load_kwargs = {
+                "device_map": device_map,
+                "torch_dtype": torch.float32,
+            }
         
         # 加载模型和处理器
         processor = AutoProcessor.from_pretrained(
@@ -118,7 +131,15 @@ def predict_action(
         images=image,
         text=instruction,
         return_tensors="pt"
-    ).to(device)
+    )
+    
+    # 确保输入数据类型与模型一致（float32）
+    # 并移动到正确的设备
+    for key in inputs:
+        if torch.is_floating_point(inputs[key]):
+            inputs[key] = inputs[key].to(device, dtype=torch.float32)
+        else:
+            inputs[key] = inputs[key].to(device)
     
     # 推理
     with torch.no_grad():

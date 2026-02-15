@@ -65,7 +65,8 @@ class SimulationManager:
         Args:
             config: 仿真配置
         """
-        if not ISAAC_SIM_AVAILABLE:
+        # 运行时动态检查Isaac Sim可用性
+        if not check_isaac_sim_available():
             raise RuntimeError(
                 "Isaac Sim is not available. Please run this in Isaac Sim environment."
             )
@@ -96,6 +97,15 @@ class SimulationManager:
         Returns:
             创建的World实例
         """
+        global World, Scene
+        
+        # 导入Isaac Sim模块（在SimulationApp启动后）
+        if not import_isaacsim_modules():
+            raise RuntimeError(
+                "Failed to import Isaac Sim modules. "
+                "Make sure SimulationApp is started."
+            )
+        
         self._world = World(
             stage_units_in_meters=1.0,
             physics_dt=self.config.physics_dt,
@@ -269,5 +279,76 @@ def get_isaac_assets_path() -> Optional[str]:
 
 
 def check_isaac_sim_available() -> bool:
-    """检查Isaac Sim是否可用"""
-    return ISAAC_SIM_AVAILABLE
+    """检查Isaac Sim是否可用（运行时动态检查）
+    
+    注意：isaacsim.core等模块需要在SimulationApp启动后才能导入
+    这里只检查是否能导入SimulationApp来判断是否在Isaac Sim环境中
+    """
+    global ISAAC_SIM_AVAILABLE
+    
+    # 如果已经可用，直接返回
+    if ISAAC_SIM_AVAILABLE:
+        return True
+    
+    # 检查是否能导入SimulationApp（这是Isaac Sim环境的标志）
+    try:
+        from isaacsim import SimulationApp
+        ISAAC_SIM_AVAILABLE = True
+        return True
+    except ImportError:
+        pass
+    
+    # 尝试旧命名空间
+    try:
+        from omni.isaac.kit import SimulationApp
+        ISAAC_SIM_AVAILABLE = True
+        return True
+    except ImportError:
+        pass
+    
+    return False
+
+
+def import_isaacsim_modules():
+    """导入Isaac Sim模块（在SimulationApp启动后调用）"""
+    global World, Scene, XFormPrim, add_reference_to_stage, get_assets_root_path
+    
+    # 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
+    try:
+        from isaacsim.core.api import World as World_new
+        from isaacsim.core.utils.stage import add_reference_to_stage as add_ref
+        from isaacsim.core.utils.nucleus import get_assets_root_path as get_assets
+        from isaacsim.core.prims import SingleXFormPrim as XFormPrim_new
+        from isaacsim.core.api.scenes import Scene as Scene_new
+        import omni.usd
+        
+        World = World_new
+        Scene = Scene_new
+        XFormPrim = XFormPrim_new
+        add_reference_to_stage = add_ref
+        get_assets_root_path = get_assets
+        
+        return True
+    except ImportError:
+        pass
+    
+    # 尝试旧的 omni.isaac 命名空间 (兼容性)
+    try:
+        from omni.isaac.core import World as World_old
+        from omni.isaac.core.utils.stage import add_reference_to_stage as add_ref_old
+        from omni.isaac.core.utils.nucleus import get_assets_root_path as get_assets_old
+        from omni.isaac.core.prims import XFormPrim as XFormPrim_old
+        from omni.isaac.core.scenes import Scene as Scene_old
+        import omni.usd
+        
+        World = World_old
+        Scene = Scene_old
+        XFormPrim = XFormPrim_old
+        add_reference_to_stage = add_ref_old
+        get_assets_root_path = get_assets_old
+        
+        return True
+    except ImportError:
+        pass
+    
+    return False
