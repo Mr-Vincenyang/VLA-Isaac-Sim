@@ -121,6 +121,19 @@ class CameraManager(SensorInterface):
             # 如果设置失败，使用默认值（通常是0.01到10000）
             logger.debug(f"Could not set clipping range: {e}. Using defaults.")
         
+        # 添加深度annotator（如果启用深度）
+        if self.config.enable_depth:
+            try:
+                import omni.replicator.core as rep
+                # 获取渲染产品路径并附加深度annotator
+                render_product_path = self._camera._render_product_path
+                if render_product_path:
+                    self._depth_annotator = rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
+                    self._depth_annotator.attach([render_product_path])
+                    logger.debug("Depth annotator attached successfully")
+            except Exception as e:
+                logger.debug(f"Could not attach depth annotator: {e}")
+        
         self._is_initialized = True
         logger.info(f"Camera setup at {self.prim_path} with resolution {self.config.width}x{self.config.height}")
     
