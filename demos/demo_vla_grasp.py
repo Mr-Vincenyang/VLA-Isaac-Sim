@@ -152,7 +152,12 @@ class VLAGraspDemo:
         # 4. 设置相机（需要在环境setup后）
         self.camera.setup()
         
-        # 5. 连接VLA服务器
+        # 5. 步进仿真几次以确保相机和物理完全初始化
+        logger.info("Initializing simulation...")
+        for _ in range(5):
+            self.sim_manager.step(render=True)
+        
+        # 6. 连接VLA服务器
         logger.info(f"Connecting to VLA server: {self.server_url}")
         self.vla_client = OpenVLAClient(
             self.config.remote,
@@ -175,77 +180,61 @@ class VLAGraspDemo:
     def _setup_viewport_camera(self):
         """设置视口相机以便查看机器人和场景"""
         try:
-            import omni.kit.viewport.utility as viewport_utils
             import numpy as np
             
-            # 获取视口
-            viewport = viewport_utils.get_active_viewport()
-            if viewport is not None:
-                # 设置相机位置：从斜上方查看机器人和桌子
-                eye_pos = np.array([1.2, -0.8, 0.9])  # 相机位置
-                target_pos = np.array([0.4, 0.0, 0.1])  # 看桌子中心
+            # 使用World的set_camera_view方法 (Isaac Sim 5.1.0 API)
+            # 从斜上方查看机器人和桌子
+            eye_pos = np.array([1.2, -0.8, 0.9])  # 相机位置
+            target_pos = np.array([0.4, 0.0, 0.1])  # 看桌子中心
+            
+            # 通过world设置相机视角
+            if self.sim_manager.world is not None:
+                # 方法1: 使用world的camera属性 (如果存在)
+                if hasattr(self.sim_manager.world, '_camera_controller'):
+                    self.sim_manager.world._camera_controller.set_view_env_index(0)
                 
-                # 使用简单的look-at计算朝向四元数
-                forward = target_pos - eye_pos
-                forward = forward / np.linalg.norm(forward)
-                
-                # 默认up向量
-                world_up = np.array([0.0, 0.0, 1.0])
-                
-                # 计算right向量
-                right = np.cross(forward, world_up)
-                if np.linalg.norm(right) < 1e-6:
-                    # forward和up平行，使用不同的up
-                    world_up = np.array([0.0, 1.0, 0.0])
-                    right = np.cross(forward, world_up)
-                right = right / np.linalg.norm(right)
-                
-                # 重新计算up
-                up = np.cross(right, forward)
-                up = up / np.linalg.norm(up)
-                
-                # 构建旋转矩阵（从相机空间到世界空间）
-                # 相机看向 -Z，up是Y，right是X
-                rot_mat = np.array([
-                    [right[0], right[1], right[2]],
-                    [up[0], up[1], up[2]],
-                    [-forward[0], -forward[1], -forward[2]]
-                ])
-                
-                # 从旋转矩阵计算四元数 [w, x, y, z]
-                trace = np.trace(rot_mat)
-                if trace > 0:
-                    s = 0.5 / np.sqrt(trace + 1.0)
-                    w = 0.25 / s
-                    x = (rot_mat[2, 1] - rot_mat[1, 2]) * s
-                    y = (rot_mat[0, 2] - rot_mat[2, 0]) * s
-                    z = (rot_mat[1, 0] - rot_mat[0, 1]) * s
-                else:
-                    # 找到最大的对角线元素
-                    i = 0
-                    if rot_mat[1, 1] > rot_mat[0, 0]:
-                        i = 1
-                    if rot_mat[2, 2] > rot_mat[i, i]:
-                        i = 2
-                    
-                    j = (i + 1) % 3
-                    k = (i + 2) % 3
-                    
-                    s = np.sqrt(rot_mat[i, i] - rot_mat[j, j] - rot_mat[k, k] + 1.0)
-                    q = [0.0, 0.0, 0.0]
-                    q[i] = s * 0.5
-                    s = 0.5 / s
-                    q[j] = (rot_mat[j, i] + rot_mat[i, j]) * s
-                    q[k] = (rot_mat[k, i] + rot_mat[i, k]) * s
-                    
-                    w = (rot_mat[k, j] - rot_mat[j, k]) * s
-                    x, y, z = q[0], q[1], q[2]
-                
-                orientation = np.array([w, x, y, z])
-                
-                # 设置视口相机
-                viewport.set_world_pose(eye_pos, orientation)
-                logger.info(f"Viewport camera set to position {eye_pos}, looking at {target_pos}")
+                # 方法2: 使用omni.kit.viewport直接设置
+                import omni.kit.viewport.utility as viewport_utils
+                viewport_api = viewport_utils.get_active_viewport()
+                if viewport_api is not None:
+                    # 获取当前的相机prim
+                    camera_path = viewport_api.get_active_camera()
+                    if camera_path:
+                        # 使用USD设置相机位置
+                        import omni.usd
+                        stage = omni.usd.get_context().get_stage()
+                        camera_prim = stage.GetPrimAtPath(camera_path)
+                        if camera_prim:
+                            from pxr import Gf
+                            # 计算look-at矩阵
+                            eye = Gf.Vec3d(eye_pos[0], eye_pos[1], eye_pos[2])
+                            target = Gf.Vec3d(target_pos[0], target_pos[1], target_pos[2])
+                            up = Gf.Vec3d(0, 0, 1)
+                            
+                            # 计算相机变换
+                            forward = (target - eye).GetNormalized()
+                            right = Gf.Cross(forward, up).GetNormalized()
+                            up = Gf.Cross(right, forward)
+                            
+                            # 构建变换矩阵
+                            transform = Gf.Matrix4d(
+                                right[0], right[1], right[2], 0,
+                                up[0], up[1], up[2], 0,
+                                -forward[0], -forward[1], -forward[2], 0,
+                                eye[0], eye[1], eye[2], 1
+                            )
+                            
+                            # 设置到xformOp
+                            xform = camera_prim.GetAttribute('xformOp:transform')
+                            if xform:
+                                xform.Set(transform)
+                            else:
+                                # 创建xformOp
+                                from pxr import UsdGeom
+                                xformable = UsdGeom.Xformable(camera_prim)
+                                xformable.AddTransformOp().Set(transform)
+                            
+                            logger.info(f"Viewport camera set to position {eye_pos}, looking at {target_pos}")
         except Exception as e:
             logger.warning(f"Could not set viewport camera: {e}")
     

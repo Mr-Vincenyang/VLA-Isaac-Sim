@@ -229,13 +229,27 @@ class FrankaGraspEnv(RobotController):
         """获取关节位置"""
         if self._robot is None:
             return np.zeros(9)
-        return self._robot.get_joint_positions()
+        try:
+            positions = self._robot.get_joint_positions()
+            if positions is None:
+                return np.zeros(9)
+            return positions
+        except Exception as e:
+            logger.debug(f"Could not get joint positions: {e}")
+            return np.zeros(9)
     
     def get_joint_velocities(self) -> np.ndarray:
         """获取关节速度"""
         if self._robot is None:
             return np.zeros(9)
-        return self._robot.get_joint_velocities()
+        try:
+            velocities = self._robot.get_joint_velocities()
+            if velocities is None:
+                return np.zeros(9)
+            return velocities
+        except Exception as e:
+            logger.debug(f"Could not get joint velocities: {e}")
+            return np.zeros(9)
     
     def get_ee_pose(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -265,11 +279,21 @@ class FrankaGraspEnv(RobotController):
         if self._robot is None:
             return 0.0
         
-        joint_positions = self._robot.get_joint_positions()
-        # Franka夹爪关节索引是7和8
-        gripper_pos = (joint_positions[7] + joint_positions[8]) / 2
-        # 归一化到[0, 1]，最大张开是0.04
-        return np.clip(gripper_pos / 0.04, 0.0, 1.0)
+        try:
+            joint_positions = self._robot.get_joint_positions()
+            if joint_positions is None:
+                return 0.0
+            
+            # Franka夹爪关节索引是7和8
+            if len(joint_positions) >= 9:
+                gripper_pos = (joint_positions[7] + joint_positions[8]) / 2
+                # 归一化到[0, 1]，最大张开是0.04
+                return np.clip(gripper_pos / 0.04, 0.0, 1.0)
+            else:
+                return 0.0
+        except Exception as e:
+            logger.debug(f"Could not get gripper state: {e}")
+            return 0.0
     
     def get_observation(self) -> Observation:
         """获取当前观测"""
