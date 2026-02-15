@@ -215,6 +215,7 @@ ssh -L 8080:localhost:8000 -p 11714 root@connect.bjb1.seetacloud.com
 ```bash
 # 测试服务是否运行
 curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # 预期输出：
 # {"status": "healthy", "model": "openvla/openvla-7b"}

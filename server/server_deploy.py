@@ -126,10 +126,14 @@ def predict_action(
     if model is None or processor is None:
         raise RuntimeError("Model not loaded")
     
+    # OpenVLA特定：构建正确的输入格式
+    # OpenVLA期望的格式是：<image>instruction
+    prompt = f"<image>{instruction}"
+    
     # 预处理
     inputs = processor(
         images=image,
-        text=instruction,
+        text=prompt,
         return_tensors="pt"
     )
     
@@ -143,39 +147,60 @@ def predict_action(
     
     # 推理
     with torch.no_grad():
-        if temperature == 0:
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                do_sample=False,
-            )
-        else:
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                do_sample=True,
-                temperature=temperature,
-            )
+        # OpenVLA使用特定的生成参数
+        generate_kwargs = {
+            "max_new_tokens": 7,  # OpenVLA输出7个动作token
+            "do_sample": temperature > 0,
+            "pad_token_id": processor.tokenizer.pad_token_id,
+            "eos_token_id": processor.tokenizer.eos_token_id,
+        }
+        
+        if temperature > 0:
+            generate_kwargs["temperature"] = temperature
+        
+        outputs = model.generate(**inputs, **generate_kwargs)
     
-    # 解码动作
-    # OpenVLA输出是文本，需要从生成的token中解码
-    try:
-        # 方法1: 如果processor有batch_decode方法
-        generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-    except:
-        # 方法2: 使用tokenizer解码
-        try:
-            generated_text = processor.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        except:
-            # 方法3: 直接返回零动作
-            logger.warning("Could not decode output, returning zero action")
-            return np.zeros(7)
-    
-    # 从生成的文本中解析动作
-    # OpenVLA通常输出格式如: "The robot should move: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 1.0]"
-    action = parse_action_from_text(generated_text)
+    # 解码动作token
+    # OpenVLA输出的是动作token，需要转换为实际的动作值
+    action = decode_openvla_action(outputs, processor)
     
     return action
+
+
+def decode_openvla_action(outputs, processor) -> np.ndarray:
+    """
+    解码OpenVLA输出的动作
+    
+    OpenVLA输出7个token，每个token对应一个动作维度
+    需要将token ID转换为实际的动作值
+    
+    Args:
+        outputs: 模型生成的输出
+        processor: 处理器
+        
+    Returns:
+        7维动作向量
+    """
+    try:
+        # 获取最后7个token（动作token）
+        action_tokens = outputs[0, -7:].cpu().numpy()
+        
+        # OpenVLA使用256个离散化的动作bin
+        # 将token ID转换为实际动作值（范围通常是-1到1）
+        # 每个维度是独立的，token ID 0-255映射到-1.0到1.0
+        action = np.zeros(7)
+        for i in range(7):
+            # 将token ID映射到动作值
+            # token 0-255 -> -1.0到1.0
+            token_id = action_tokens[i]
+            action[i] = (token_id / 127.5) - 1.0
+        
+        return action
+        
+    except Exception as e:
+        logger.error(f"Failed to decode action: {e}")
+        # 返回零动作作为后备
+        return np.zeros(7)
 
 
 def parse_action_from_text(text: str) -> np.ndarray:
