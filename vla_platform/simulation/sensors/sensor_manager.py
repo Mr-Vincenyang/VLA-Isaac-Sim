@@ -224,8 +224,32 @@ class CameraManager(SensorInterface):
         try:
             rgb = self._camera.get_rgba()
             if rgb is not None:
-                # 转换为RGB（去掉alpha通道）
-                result["rgb"] = rgb[:, :, :3].astype(np.uint8)
+                # 检查返回数据的形状
+                if len(rgb.shape) == 3 and rgb.shape[2] >= 3:
+                    # 正常的3D数组 (H, W, C)
+                    result["rgb"] = rgb[:, :, :3].astype(np.uint8)
+                elif len(rgb.shape) == 1:
+                    # 1D数组，需要reshape
+                    logger.debug(f"Camera returned 1D array with shape {rgb.shape}, reshaping...")
+                    # 尝试reshape为 (H, W, 4) 假设RGBA
+                    total_pixels = rgb.shape[0]
+                    if total_pixels == self.config.height * self.config.width * 4:
+                        rgb_reshaped = rgb.reshape((self.config.height, self.config.width, 4))
+                        result["rgb"] = rgb_reshaped[:, :, :3].astype(np.uint8)
+                    elif total_pixels == self.config.height * self.config.width * 3:
+                        result["rgb"] = rgb.reshape((self.config.height, self.config.width, 3)).astype(np.uint8)
+                    else:
+                        logger.warning(f"Unexpected image size: {total_pixels}")
+                        result["rgb"] = np.zeros(
+                            (self.config.height, self.config.width, 3), 
+                            dtype=np.uint8
+                        )
+                else:
+                    logger.warning(f"Unexpected RGB array shape: {rgb.shape}")
+                    result["rgb"] = np.zeros(
+                        (self.config.height, self.config.width, 3), 
+                        dtype=np.uint8
+                    )
             else:
                 result["rgb"] = np.zeros(
                     (self.config.height, self.config.width, 3), 

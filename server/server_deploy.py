@@ -158,11 +158,65 @@ def predict_action(
             )
     
     # 解码动作
-    # OpenVLA输出格式: 7个动作token
-    action_tokens = outputs[0, -7:]
-    action = processor.decode_action(action_tokens)
+    # OpenVLA输出是文本，需要从生成的token中解码
+    try:
+        # 方法1: 如果processor有batch_decode方法
+        generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+    except:
+        # 方法2: 使用tokenizer解码
+        try:
+            generated_text = processor.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        except:
+            # 方法3: 直接返回零动作
+            logger.warning("Could not decode output, returning zero action")
+            return np.zeros(7)
+    
+    # 从生成的文本中解析动作
+    # OpenVLA通常输出格式如: "The robot should move: [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 1.0]"
+    action = parse_action_from_text(generated_text)
     
     return action
+
+
+def parse_action_from_text(text: str) -> np.ndarray:
+    """
+    从生成的文本中解析动作
+    
+    OpenVLA输出通常是包含动作数组的文本
+    尝试提取其中的7个数字作为动作
+    
+    Args:
+        text: 模型生成的文本
+        
+    Returns:
+        7维动作向量
+    """
+    import re
+    
+    # 尝试找到方括号中的数组
+    bracket_match = re.search(r'\[([\d\s,\.\-]+)\]', text)
+    if bracket_match:
+        try:
+            # 提取方括号内的内容
+            array_str = bracket_match.group(1)
+            # 分割并转换为浮点数
+            numbers = [float(x.strip()) for x in array_str.split(',')]
+            if len(numbers) >= 7:
+                return np.array(numbers[:7])
+        except:
+            pass
+    
+    # 尝试直接找到所有数字
+    numbers = re.findall(r'-?\d+\.?\d*', text)
+    if len(numbers) >= 7:
+        try:
+            return np.array([float(numbers[i]) for i in range(7)])
+        except:
+            pass
+    
+    # 如果都无法解析，返回零动作
+    logger.warning(f"Could not parse action from text: {text[:100]}...")
+    return np.zeros(7)
 
 
 @app.route('/health', methods=['GET'])
