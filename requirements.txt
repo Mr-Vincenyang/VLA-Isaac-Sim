@@ -5,6 +5,7 @@
 # 注意事项:
 # 1. Isaac Sim 用户请在 Isaac Sim Python 环境中安装
 # 2. 如果仅使用远程推理，可以跳过 Isaac Sim 相关依赖
+# 3. OpenVLA 模型需要特定版本的 transformers 和 timm，已在此文件中固定。
 # ================================================
 
 # ============== 核心依赖 ==============
@@ -25,12 +26,15 @@ torchaudio>=2.1.0
 # 安装命令: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # ============== Transformers & 模型 ==============
-transformers>=4.36.0
+# OpenVLA 要求 transformers==4.40.1（避免 5.x 的 API 变更）
+transformers==4.40.1
 accelerate>=0.25.0
 safetensors>=0.4.0
 tokenizers>=0.15.0
 sentencepiece>=0.1.99
 huggingface-hub>=0.20.0
+# OpenVLA 需要 timm 0.9.x 版本
+timm>=0.9.10,<1.0.0
 
 # ============== 高效微调 ==============
 peft>=0.7.0                    # LoRA, QLoRA等高效微调方法
