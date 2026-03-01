@@ -77,7 +77,14 @@ REQUIRED_MINOR=8
 CURRENT_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
 CURRENT_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
-if [ "$CURRENT_MAJOR" -lt "$REQUIRED_MAJOR" ] || ([ "$CURRENT_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$CURRENT_MINOR" -lt "$REQUIRED_MINOR" ]; then
+VERSION_OK=true
+if [ "$CURRENT_MAJOR" -lt "$REQUIRED_MAJOR" ]; then
+    VERSION_OK=false
+elif [ "$CURRENT_MAJOR" -eq "$REQUIRED_MAJOR" ] && [ "$CURRENT_MINOR" -lt "$REQUIRED_MINOR" ]; then
+    VERSION_OK=false
+fi
+
+if [ "$VERSION_OK" = false ]; then
     echo -e "${RED}Error: Python $REQUIRED_MAJOR.$REQUIRED_MINOR+ required, found $PYTHON_VERSION${NC}"
     exit 1
 fi
