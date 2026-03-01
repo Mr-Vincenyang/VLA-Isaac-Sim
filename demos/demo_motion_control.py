@@ -1,313 +1,211 @@
-# Motion Control Demo
+# Motion Control Demo - Simple Version
 """
-运动控制功能演示
-
-演示内容:
-1. 轨迹跟踪控制
-2. 阻抗控制
-3. 最小急动度轨迹生成
-
-使用方法:
-    在Isaac Sim Python环境中运行:
-    python demos/demo_motion_control.py
+运动控制功能演示 - 简化版
+直接复用 demo_simple_scene.py 的 Replicator 录制方式
 """
 import argparse
 import time
 import logging
+import os
 from pathlib import Path
 import sys
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import numpy as np
+# 创建输出目录
+output_dir = "/home/vincent/Desktop/code/VLA/output"
+os.makedirs(output_dir, exist_ok=True)
 
-from vla_platform.simulation.sim_manager import SimulationManager, check_isaac_sim_available
-from vla_platform.simulation.envs.franka_env import FrankaGraspEnv, FrankaEnvConfig
-from vla_platform.control.motion_controller import MotionController, PDController
-from vla_platform.control.trajectory_planner import (
-    TrajectoryPlanner,
-    MinJerkTrajectory,
-    TrajectoryPoint
-)
-from vla_platform.control.impedance_controller import ImpedanceController, ImpedanceParams
-from vla_platform.core.config import ControlConfig
+# 首先启动Isaac Sim SimulationApp
+print("Starting Isaac Sim SimulationApp...")
+try:
+    from isaacsim import SimulationApp
+    
+    simulation_config = {
+        "headless": True,
+        "width": 1280,
+        "height": 720,
+        "renderer": "RayTracedLighting",
+        "enable_shadows": False,
+    }
+    
+    simulation_app = SimulationApp(simulation_config)
+    print("✓ SimulationApp started successfully")
+except Exception as e:
+    print(f"✗ Failed to start SimulationApp: {e}")
+    print("Please run this script in Isaac Sim Python environment:")
+    print("  ./python.sh demos/demo_motion_control.py")
+    sys.exit(1)
+
+import numpy as np
+import cv2
+
+# Isaac Sim 模块
+from isaacsim.core.api import World
+from isaacsim.core.api.objects import DynamicCuboid
+from isaacsim.robot.manipulators.examples.franka import Franka
+import omni.replicator.core as rep
+from isaacsim.core.utils.viewports import set_camera_view
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class MotionControlDemo:
-    """运动控制演示"""
-    
-    def __init__(self, headless: bool = False):
-        self.headless = headless
-        self.sim_manager = None
-        self.env = None
-        
-    def setup(self):
-        """设置仿真环境"""
-        if not check_isaac_sim_available():
-            raise RuntimeError("Isaac Sim not available")
-        
-        # 创建仿真管理器
-        from vla_platform.core.config import SimulationConfig
-        sim_config = SimulationConfig(
-            physics_dt=1.0/240.0,
-            rendering_dt=1.0/60.0,
-            headless=self.headless
-        )
-        
-        self.sim_manager = SimulationManager(sim_config)
-        self.sim_manager.create_world()
-        
-        # 创建Franka环境
-        env_config = FrankaEnvConfig(num_objects=0)  # 不需要物体
-        self.env = FrankaGraspEnv(
-            sim_manager=self.sim_manager,
-            config=env_config
-        )
-        self.env.setup()
-        
-        logger.info("Motion control demo setup complete")
-    
-    def demo_pd_control(self):
-        """演示PD关节控制"""
-        logger.info("\n=== PD Control Demo ===")
-        
-        # 创建PD控制器
-        config = ControlConfig()
-        controller = MotionController(config)
-        
-        # 目标关节位置序列
-        targets = [
-            np.array([0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.785]),
-            np.array([0.5, -0.3, 0.3, -1.8, 0.2, 1.2, 0.5]),
-            np.array([-0.5, -0.7, -0.3, -2.2, -0.2, 1.8, 1.0]),
-            np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]),  # 回到初始
-        ]
-        
-        for i, target in enumerate(targets):
-            logger.info(f"Moving to target {i+1}/{len(targets)}")
-            
-            for step in range(200):
-                current_pos = self.env.get_joint_positions()[:7]
-                current_vel = self.env.get_joint_velocities()[:7]
-                
-                # 计算控制输出
-                torque = controller.compute_joint_control(
-                    current_pos, current_vel, target
-                )
-                
-                # 使用位置控制（简化）
-                new_pos = current_pos + 0.01 * (target - current_pos)
-                
-                # 设置关节位置
-                full_pos = self.env.get_joint_positions()
-                full_pos[:7] = new_pos
-                self.env._robot.set_joint_positions(full_pos)
-                
-                self.sim_manager.step()
-                
-                # 检查是否到达
-                if np.linalg.norm(current_pos - target) < 0.01:
-                    break
-            
-            time.sleep(0.5)
-        
-        logger.info("PD control demo complete")
-    
-    def demo_trajectory_following(self):
-        """演示轨迹跟踪"""
-        logger.info("\n=== Trajectory Following Demo ===")
-        
-        # 创建轨迹规划器
-        max_velocity = np.ones(7) * 1.5
-        max_acceleration = np.ones(7) * 3.0
-        
-        planner = TrajectoryPlanner(
-            max_velocity=max_velocity,
-            max_acceleration=max_acceleration
-        )
-        
-        # 定义路径点
-        waypoints = [
-            np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]),
-            np.array([0.3, -0.5, 0.2, -2.0, 0.1, 1.3, 0.6]),
-            np.array([0.5, -0.3, 0.4, -1.8, 0.3, 1.1, 0.4]),
-            np.array([0.3, -0.5, 0.2, -2.0, 0.1, 1.3, 0.6]),
-            np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]),
-        ]
-        
-        # 生成轨迹
-        trajectory = planner.interpolate(waypoints, dt=0.02)
-        logger.info(f"Generated trajectory with {len(trajectory)} points")
-        
-        # 跟踪轨迹
-        for i, target in enumerate(trajectory):
-            if i % 10 == 0:
-                logger.info(f"Trajectory point {i}/{len(trajectory)}")
-            
-            # 设置关节位置
-            full_pos = self.env.get_joint_positions()
-            full_pos[:7] = target
-            self.env._robot.set_joint_positions(full_pos)
-            
-            # 步进仿真
-            for _ in range(5):  # 5个物理步进每个轨迹点
-                self.sim_manager.step()
-        
-        logger.info("Trajectory following demo complete")
-    
-    def demo_min_jerk_trajectory(self):
-        """演示最小急动度轨迹"""
-        logger.info("\n=== Minimum Jerk Trajectory Demo ===")
-        
-        # 起点和终点
-        start_pos = np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785])
-        end_pos = np.array([0.5, -0.3, 0.5, -1.5, 0.5, 1.0, 0.3])
-        
-        # 生成最小急动度轨迹
-        duration = 3.0
-        trajectory = MinJerkTrajectory.generate(
-            start_pos=start_pos,
-            end_pos=end_pos,
-            duration=duration,
-            dt=0.01
-        )
-        
-        logger.info(f"Generated min-jerk trajectory with {len(trajectory)} points")
-        
-        # 执行轨迹
-        for i, point in enumerate(trajectory):
-            if i % 50 == 0:
-                logger.info(f"Position: {point.position[:3]}")
-                logger.info(f"Velocity: {point.velocity[:3] if point.velocity is not None else 'N/A'}")
-            
-            full_pos = self.env.get_joint_positions()
-            full_pos[:7] = point.position
-            self.env._robot.set_joint_positions(full_pos)
-            
-            self.sim_manager.step()
-        
-        logger.info("Minimum jerk trajectory demo complete")
-    
-    def demo_impedance_control(self):
-        """演示阻抗控制"""
-        logger.info("\n=== Impedance Control Demo ===")
-        
-        # 创建阻抗控制器
-        params = ImpedanceParams(
-            stiffness=np.array([200, 200, 200, 20, 20, 20]),
-            damping=np.array([20, 20, 20, 2, 2, 2])
-        )
-        controller = ImpedanceController(params)
-        
-        # 获取当前末端位置
-        current_ee_pos, current_ee_quat = self.env.get_ee_pose()
-        
-        # 设置目标（当前位置上移0.1m）
-        target_pos = current_ee_pos.copy()
-        target_pos[2] += 0.1
-        
-        controller.set_target(
-            position=target_pos,
-            orientation=current_ee_quat
-        )
-        
-        logger.info(f"Target position: {target_pos}")
-        
-        for step in range(500):
-            # 获取当前状态
-            ee_pos, ee_quat = self.env.get_ee_pose()
-            joint_vel = self.env.get_joint_velocities()[:7]
-            
-            # 简化：假设末端速度
-            ee_vel = np.zeros(3)  # 应该从机器人动力学计算
-            ee_angular_vel = np.zeros(3)
-            
-            # 计算阻抗控制力
-            wrench = controller.compute(
-                current_position=ee_pos,
-                current_orientation=ee_quat,
-                current_velocity=ee_vel,
-                current_angular_velocity=ee_angular_vel,
-                dt=1.0/240.0
-            )
-            
-            if step % 100 == 0:
-                error = target_pos - ee_pos
-                logger.info(f"Step {step}: Position error = {error}, Wrench = {wrench[:3]}")
-            
-            # 简化：直接移动末端执行器（实际应用需要逆运动学）
-            delta = 0.001 * wrench[:3]
-            # 这里应该转换为关节空间控制
-            
-            self.sim_manager.step()
-        
-        logger.info("Impedance control demo complete")
-    
-    def run_all_demos(self):
-        """运行所有演示"""
-        logger.info("\n" + "="*50)
-        logger.info("Starting Motion Control Demos")
-        logger.info("="*50)
-        
-        self.demo_pd_control()
-        time.sleep(1)
-        
-        self.demo_min_jerk_trajectory()
-        time.sleep(1)
-        
-        self.demo_trajectory_following()
-        time.sleep(1)
-        
-        self.demo_impedance_control()
-        
-        logger.info("\n" + "="*50)
-        logger.info("All demos complete!")
-        logger.info("="*50)
-    
-    def cleanup(self):
-        """清理资源"""
-        if self.sim_manager:
-            self.sim_manager.cleanup()
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Motion Control Demo")
-    parser.add_argument(
-        "--demo",
-        type=str,
-        choices=["all", "pd", "trajectory", "minjerk", "impedance"],
-        default="all",
-        help="Which demo to run"
+    # 创建世界
+    print("\n[1/6] Creating world...")
+    world = World(physics_dt=1/60, rendering_dt=1/60)
+    world.scene.add_default_ground_plane()
+    print("✓ Ground plane added")
+    
+    # 添加Franka机器人
+    print("\n[2/6] Adding Franka robot...")
+    franka = Franka(
+        prim_path="/World/Franka",
+        name="franka",
+        position=np.array([0.0, 0.0, 0.0])
     )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run in headless mode"
+    world.scene.add(franka)
+    print("✓ Franka robot added")
+    
+    # 添加桌子
+    print("\n[3/6] Adding table...")
+    table_pos = [0.4, 0.0, 0.025]  # 桌子中心位置
+    table = DynamicCuboid(
+        prim_path="/World/Table",
+        name="table",
+        position=np.array(table_pos),
+        size=1.0,
+        scale=np.array([0.6, 1.0, 0.05]),
+        color=np.array([0.5, 0.35, 0.2]),
+        mass=1000.0
     )
+    world.scene.add(table)
+    print("✓ Table added")
     
-    args = parser.parse_args()
+    # 设置Replicator相机
+    print("\n[4/6] Setting up Replicator camera...")
+    camera_pos = (1.5, -1.0, 1.2)
+    look_at = (0.4, 0.0, 0.2)
     
-    demo = MotionControlDemo(headless=args.headless)
+    camera = rep.create.camera(position=camera_pos, look_at=look_at)
+    render_product = rep.create.render_product(camera, resolution=(1280, 720))
+    rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+    rgb_annotator.attach(render_product)
+    print("✓ Camera setup complete")
     
+    # 设置视口相机
+    print("\n[5/6] Setting viewport camera...")
     try:
-        demo.setup()
+        set_camera_view(camera_pos, look_at, camera_prim_path="/OmniverseKit_Persp")
+        print("✓ Viewport camera set")
+    except Exception as e:
+        print(f"Warning: Could not set viewport camera: {e}")
+    
+    # 初始化
+    world.reset()
+    rep.orchestrator.run()
+    
+    # 预热
+    print("\n[6/6] Warming up (60 steps)...")
+    for i in range(60):
+        world.step(render=True)
+        rep.orchestrator.step()
+        if i % 20 == 0:
+            print(f"  {i}/60")
+    print("✓ Warmup complete")
+    
+    # 使用 set_joint_positions 直接设置关节位置
+    default_joints = np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785, 0.04, 0.04])
+    
+    # 开始录制视频
+    print("\n" + "="*60)
+    print("Recording video...")
+    print("="*60)
+    
+    video_path = os.path.join(output_dir, "motion_control_demo.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(video_path, fourcc, 30, (1280, 720))
+    
+    frame_count = 0
+    
+    # 运动控制序列 - 使用set_joint_positions
+    targets = [
+        np.array([0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.785, 0.04, 0.04]),
+        np.array([0.3, -0.4, 0.2, -1.8, 0.1, 1.3, 0.6, 0.02, 0.02]),
+        np.array([0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785, 0.04, 0.04]),
+    ]
+    
+    for target_idx, target in enumerate(targets):
+        print(f"\nMoving to target {target_idx + 1}/{len(targets)}: {target[:7]}")
         
-        if args.demo == "all":
-            demo.run_all_demos()
-        elif args.demo == "pd":
-            demo.demo_pd_control()
-        elif args.demo == "trajectory":
-            demo.demo_trajectory_following()
-        elif args.demo == "minjerk":
-            demo.demo_min_jerk_trajectory()
-        elif args.demo == "impedance":
-            demo.demo_impedance_control()
-    finally:
-        demo.cleanup()
+        # 逐步移动到目标 - 使用简单的P控制器
+        for step in range(80):
+            # 获取当前位置
+            try:
+                current_pos = franka.get_joint_positions()
+                if current_pos is None:
+                    current_pos = default_joints.copy()
+            except:
+                current_pos = default_joints.copy()
+            
+            # 简单的P控制器
+            new_pos = current_pos + 0.025 * (target - current_pos)
+            
+            # 使用set_joint_positions
+            try:
+                franka.set_joint_positions(new_pos)
+            except Exception as e:
+                # 如果失败，忽略
+                pass
+            
+            # 步进
+            world.step(render=True)
+            rep.orchestrator.step()
+            
+            # 录制
+            data = rgb_annotator.get_data()
+            if data is not None and len(data.shape) == 3 and data.shape[2] >= 3:
+                frame = cv2.cvtColor(data[:,:,:3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+                video_writer.write(frame)
+                frame_count += 1
+            
+            if step % 20 == 0:
+                print(f"  Step {step}/80, frames: {frame_count}")
+            
+            # 检查是否到达
+            if np.linalg.norm(new_pos[:7] - target[:7]) < 0.02:
+                print(f"  Reached target at step {step}")
+                break
+        
+        time.sleep(0.3)
+    
+    video_writer.release()
+    print(f"\n✓ Video saved: {video_path}")
+    print(f"  Total frames: {frame_count}")
+    
+    # 捕获一张静态图片
+    print("\nCapturing static frame...")
+    data = rgb_annotator.get_data()
+    frame_path = ""
+    if data is not None and len(data.shape) == 3:
+        frame = cv2.cvtColor(data[:,:,:3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+        frame_path = os.path.join(output_dir, "motion_control_demo_frame.png")
+        cv2.imwrite(frame_path, frame)
+        print(f"  ✓ Frame saved: {frame_path}")
+    
+    # 清理
+    print("\nCleaning up...")
+    rep.orchestrator.stop()
+    world.clear()
+    simulation_app.close()
+    
+    print("\n" + "="*60)
+    print("Demo Complete!")
+    print(f"视频: {video_path}")
+    print(f"截图: {frame_path}")
+    print("="*60)
 
 
 if __name__ == "__main__":

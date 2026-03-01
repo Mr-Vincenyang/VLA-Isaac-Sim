@@ -17,6 +17,7 @@ DynamicCuboid = None
 ArticulationView = None
 prim_utils = None
 get_assets_root_path = None
+ArticulationAction = None  # 用于关节控制的ArticulationAction
 
 # 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
 try:
@@ -29,6 +30,8 @@ try:
     from isaacsim.robot.manipulators.examples.franka import Franka
     from isaacsim.core.prims import ArticulationView
     import isaacsim.core.utils.prims as prim_utils
+    # 导入ArticulationAction用于关节控制
+    from isaacsim.core.utils.types import ArticulationAction
     ISAAC_SIM_AVAILABLE = True
 except ImportError:
     pass
@@ -238,6 +241,32 @@ class FrankaGraspEnv(RobotController):
             logger.debug(f"Could not get joint positions: {e}")
             return np.zeros(9)
     
+    def set_joint_positions(self, positions: np.ndarray) -> None:
+        """
+        设置关节位置 - 使用ArticulationAction正确控制机械臂
+        
+        Args:
+            positions: 关节位置数组 (9个值: 7个臂关节 + 2个夹爪)
+        """
+        if self._robot is None:
+            return
+        
+        try:
+            # 使用ArticulationAction进行关节控制 (Isaac Sim 5.x正确方式)
+            if ArticulationAction is not None:
+                action = ArticulationAction(joint_positions=positions)
+                self._robot.apply_action(action)
+            else:
+                # 兼容旧API
+                self._robot.set_joint_positions(positions)
+        except Exception as e:
+            logger.debug(f"Could not set joint positions: {e}")
+            # 回退到旧方式
+            try:
+                self._robot.set_joint_positions(positions)
+            except Exception as e2:
+                logger.error(f"Failed to set joint positions: {e2}")
+    
     def get_joint_velocities(self) -> np.ndarray:
         """获取关节速度"""
         if self._robot is None:
@@ -388,7 +417,8 @@ class FrankaGraspEnv(RobotController):
                 self.JOINT_LIMITS_LOW,
                 self.JOINT_LIMITS_HIGH
             )
-            self._robot.set_joint_positions(joint_positions)
+            # 使用新的set_joint_positions方法(内部使用ArticulationAction)
+            self.set_joint_positions(joint_positions)
         
         if len(action.values) > 7:
             self._set_gripper(action.values[7] if len(action.values) > 7 else 0.0)

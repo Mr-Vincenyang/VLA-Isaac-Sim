@@ -1,36 +1,22 @@
-# VLA Platform - Sensor Manager
+# VLA Platform - Sensor Manager (Replicator API)
 """
-传感器管理模块
+传感器管理模块 - 使用Replicator API
 管理RGB相机、深度相机等传感器
+解决Isaac Sim 5.1.0 headless模式下的相机黑屏问题
 """
 import numpy as np
 from typing import Dict, Any, Tuple, List, Optional
 from dataclasses import dataclass, field
 import logging
+import omni.replicator.core as rep
 
-# Isaac Sim imports - 支持新旧两种命名空间
+# Isaac Sim imports
 ISAAC_SIM_AVAILABLE = False
-Camera = None
-rot_utils = None
-
-# 尝试新的 isaacsim 命名空间 (Isaac Sim 5.x)
 try:
-    from isaacsim.sensors.camera import Camera
-    import isaacsim.core.utils.numpy.rotations as rot_utils
     from isaacsim.core.api import World
     ISAAC_SIM_AVAILABLE = True
 except ImportError:
     pass
-
-# 尝试旧的 omni.isaac 命名空间 (兼容性)
-if not ISAAC_SIM_AVAILABLE:
-    try:
-        from omni.isaac.sensor import Camera
-        import omni.isaac.core.utils.numpy.rotations as rot_utils
-        from omni.isaac.core import World
-        ISAAC_SIM_AVAILABLE = True
-    except ImportError:
-        pass
 
 from vla_platform.core.base_interfaces import SensorInterface
 
@@ -53,9 +39,10 @@ class CameraConfig:
 
 class CameraManager(SensorInterface):
     """
-    相机管理器
+    相机管理器 - 使用Replicator API
     
     管理仿真中的RGB和深度相机
+    解决Isaac Sim 5.1.0 headless模式下的相机黑屏问题
     """
     
     def __init__(
@@ -78,8 +65,12 @@ class CameraManager(SensorInterface):
         self.prim_path = prim_path
         self.config = config or CameraConfig()
         self._world = world
-        self._camera: Optional["Camera"] = None
+        self._camera = None
+        self._render_product = None
+        self._rgb_annotator = None
+        self._depth_annotator = None
         self._is_initialized = False
+        self._orchestrator_running = False
         
     @property
     def sensor_type(self) -> str:
@@ -90,103 +81,80 @@ class CameraManager(SensorInterface):
         return self._is_initialized
     
     def setup(self) -> None:
-        """设置相机"""
-        # 计算朝向四元数
-        orientation = self._calculate_orientation()
-        
+        """设置相机 - 使用Replicator API"""
         # 创建相机
-        self._camera = Camera(
-            prim_path=self.prim_path,
-            position=np.array(self.config.position),
-            frequency=30,  # 30 Hz
-            resolution=(self.config.width, self.config.height),
-            orientation=orientation,
+        camera_pos = tuple(self.config.position)
+        target_pos = tuple(self.config.target)
+        
+        # 使用Replicator创建相机
+        self._camera = rep.create.camera(
+            position=camera_pos,
+            look_at=target_pos
         )
+        logger.info(f"Created Replicator camera at {camera_pos}")
         
-        # 将相机添加到world scene（如果提供了world）
-        if self._world is not None and hasattr(self._world, 'scene'):
-            self._world.scene.add(self._camera)
-            logger.info(f"Camera added to world scene at {self.prim_path}")
+        # 创建渲染产品
+        self._render_product = rep.create.render_product(
+            self._camera,
+            resolution=(self.config.width, self.config.height)
+        )
+        logger.info(f"Created render product at {self.config.width}x{self.config.height}")
         
-        # 初始化渲染 - 必须在添加到scene之后调用
-        self._camera.initialize()
+        # 设置RGB annotator
+        self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        self._rgb_annotator.attach(self._render_product)
+        logger.info("Attached RGB annotator")
         
-        # 设置裁剪平面（可选，使用默认值）
-        # 注意：Isaac Sim 5.1.0的Camera API裁剪平面参数可能有所不同
-        # 这里尝试设置，如果失败则使用默认值
-        try:
-            # 尝试直接调用（不带参数名，使用位置参数）
-            self._camera.set_clipping_range(self.config.near_clip, self.config.far_clip)
-        except Exception as e:
-            # 如果设置失败，使用默认值（通常是0.01到10000）
-            logger.debug(f"Could not set clipping range: {e}. Using defaults.")
-        
-        # 添加深度annotator（如果启用深度）
+        # 设置深度 annotator（如果启用）
         if self.config.enable_depth:
             try:
-                import omni.replicator.core as rep
-                # 获取渲染产品路径并附加深度annotator
-                render_product_path = self._camera._render_product_path
-                if render_product_path:
-                    self._depth_annotator = rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
-                    self._depth_annotator.attach([render_product_path])
-                    logger.debug("Depth annotator attached successfully")
+                self._depth_annotator = rep.AnnotatorRegistry.get_annotator("distance_to_image_plane")
+                self._depth_annotator.attach(self._render_product)
+                logger.info("Attached depth annotator")
             except Exception as e:
-                logger.debug(f"Could not attach depth annotator: {e}")
+                logger.warning(f"Could not attach depth annotator: {e}")
+        
+        # 启动Replicator orchestrator
+        if not self._orchestrator_running:
+            rep.orchestrator.run()
+            self._orchestrator_running = True
         
         self._is_initialized = True
-        logger.info(f"Camera setup at {self.prim_path} with resolution {self.config.width}x{self.config.height}")
+        logger.info(f"Camera setup complete at {self.prim_path}")
+    
+    def orchestrator_step(self) -> None:
+        """调用Replicator orchestrator步进（必须在每帧渲染后调用）"""
+        if self._orchestrator_running:
+            rep.orchestrator.step()
     
     def _calculate_orientation(self) -> np.ndarray:
-        """
-        计算相机朝向四元数，使相机朝向target点
-        
-        Returns:
-            四元数 [w, x, y, z]
-        """
-        if rot_utils is None:
-            # 如果无法导入rot_utils，返回默认朝向（指向负Z轴）
-            return np.array([1.0, 0.0, 0.0, 0.0])
-        
+        """计算相机朝向四元数（兼容方法）"""
         position = np.array(self.config.position)
         target = np.array(self.config.target)
         
-        # 计算前向向量（从position指向target）
         forward = target - position
         forward_norm = np.linalg.norm(forward)
         
         if forward_norm < 1e-6:
-            # 如果position和target重合，使用默认朝向
             return np.array([1.0, 0.0, 0.0, 0.0])
         
         forward = forward / forward_norm
-        
-        # Isaac Sim中相机的默认朝向是指向负Z轴
-        # 我们需要计算从 [0, 0, -1] 旋转到 forward 的旋转
         default_forward = np.array([0.0, 0.0, -1.0])
         
-        # 计算旋转轴和角度
         rotation_axis = np.cross(default_forward, forward)
         rotation_axis_norm = np.linalg.norm(rotation_axis)
         
         if rotation_axis_norm < 1e-6:
-            # 两个向量平行
             if np.dot(default_forward, forward) > 0:
-                # 同向，无需旋转
                 return np.array([1.0, 0.0, 0.0, 0.0])
             else:
-                # 反向，旋转180度
                 return np.array([0.0, 0.0, 1.0, 0.0])
         
         rotation_axis = rotation_axis / rotation_axis_norm
-        
-        # 计算旋转角度
-        cos_angle = np.dot(default_forward, forward)
-        cos_angle = np.clip(cos_angle, -1.0, 1.0)
+        cos_angle = np.clip(np.dot(default_forward, forward), -1.0, 1.0)
         angle = np.arccos(cos_angle)
-        
-        # 将轴角转换为四元数
         half_angle = angle / 2.0
+        
         w = np.cos(half_angle)
         x = rotation_axis[0] * np.sin(half_angle)
         y = rotation_axis[1] * np.sin(half_angle)
@@ -195,26 +163,35 @@ class CameraManager(SensorInterface):
         return np.array([w, x, y, z])
     
     def _look_at(self, target: List[float]) -> None:
-        """
-        设置相机朝向目标点
-        
-        Args:
-            target: 目标位置 [x, y, z]
-        """
+        """设置相机朝向目标点"""
         if self._camera is None:
             return
         
         self.config.target = target
         
-        # 重新计算朝向
-        orientation = self._calculate_orientation()
+        camera_pos = tuple(self.config.position)
+        target_pos = tuple(target)
         
-        # 设置新的朝向
-        position = np.array(self.config.position)
-        self._camera.set_world_pose(position=position, orientation=orientation)
+        self._camera = rep.create.camera(
+            position=camera_pos,
+            look_at=target_pos,
+            fstop=1.8,
+            focal_length=24.0
+        )
+        
+        self._render_product = rep.create.render_product(
+            self._camera,
+            resolution=(self.config.width, self.config.height)
+        )
+        
+        self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        self._rgb_annotator.attach(self._render_product)
+        
+        if self._depth_annotator:
+            self._depth_annotator.attach(self._render_product)
         
         logger.debug(f"Camera oriented to look at {target}")
-        
+    
     def get_resolution(self) -> Tuple[int, int]:
         """获取相机分辨率"""
         return (self.config.width, self.config.height)
@@ -226,68 +203,48 @@ class CameraManager(SensorInterface):
         Returns:
             包含'rgb'和可选'depth'的字典
         """
-        if not self._is_initialized or self._camera is None:
+        if not self._is_initialized or self._rgb_annotator is None:
             return {
                 "rgb": np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
             }
         
         result = {}
         
-        # 获取RGB图像
         try:
-            # 注意：Isaac Sim相机需要在渲染后才能获取图像
-            # 如果返回None或空数组，可能是渲染还未完成
-            rgb = self._camera.get_rgba()
+            # 调用orchestrator获取最新数据
+            self.orchestrator_step()
             
-            if rgb is not None and rgb.size > 0:
-                # 检查返回数据的形状
-                if len(rgb.shape) == 3 and rgb.shape[2] >= 3:
-                    # 正常的3D数组 (H, W, C)
-                    result["rgb"] = rgb[:, :, :3].astype(np.uint8)
-                    logger.debug(f"Camera captured image: {result['rgb'].shape}")
-                elif len(rgb.shape) == 1:
-                    # 1D数组，需要reshape
-                    total_pixels = rgb.shape[0]
-                    logger.debug(f"Camera returned 1D array with {total_pixels} pixels")
-                    # 尝试reshape为 (H, W, 4) 假设RGBA
-                    if total_pixels == self.config.height * self.config.width * 4:
-                        rgb_reshaped = rgb.reshape((self.config.height, self.config.width, 4))
-                        result["rgb"] = rgb_reshaped[:, :, :3].astype(np.uint8)
-                    elif total_pixels == self.config.height * self.config.width * 3:
-                        result["rgb"] = rgb.reshape((self.config.height, self.config.width, 3)).astype(np.uint8)
+            # 从annotator获取数据
+            rgb_data = self._rgb_annotator.get_data()
+            
+            if rgb_data is not None:
+                if isinstance(rgb_data, np.ndarray):
+                    if len(rgb_data.shape) == 3 and rgb_data.shape[2] >= 3:
+                        # RGBA -> RGB
+                        result["rgb"] = rgb_data[:, :, :3].astype(np.uint8)
+                        logger.debug(f"Camera captured image: {result['rgb'].shape}")
+                    elif len(rgb_data.shape) == 2:
+                        # 灰度图 -> RGB
+                        result["rgb"] = np.stack([rgb_data]*3, axis=-1).astype(np.uint8)
                     else:
-                        logger.warning(f"Unexpected image size: {total_pixels}, expected {self.config.height * self.config.width * 3} or {self.config.height * self.config.width * 4}")
-                        result["rgb"] = np.zeros(
-                            (self.config.height, self.config.width, 3), 
-                            dtype=np.uint8
-                        )
+                        logger.warning(f"Unexpected RGB array shape: {rgb_data.shape}")
+                        result["rgb"] = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
                 else:
-                    logger.warning(f"Unexpected RGB array shape: {rgb.shape}")
-                    result["rgb"] = np.zeros(
-                        (self.config.height, self.config.width, 3), 
-                        dtype=np.uint8
-                    )
+                    result["rgb"] = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
             else:
-                logger.debug("Camera returned None or empty array, returning zeros")
-                result["rgb"] = np.zeros(
-                    (self.config.height, self.config.width, 3), 
-                    dtype=np.uint8
-                )
+                logger.debug("Camera returned None, returning zeros")
+                result["rgb"] = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
+                
         except Exception as e:
             logger.warning(f"Failed to get RGB image: {e}")
-            import traceback
-            traceback.print_exc()
-            result["rgb"] = np.zeros(
-                (self.config.height, self.config.width, 3), 
-                dtype=np.uint8
-            )
+            result["rgb"] = np.zeros((self.config.height, self.config.width, 3), dtype=np.uint8)
         
         # 获取深度图
-        if self.config.enable_depth:
+        if self.config.enable_depth and self._depth_annotator is not None:
             try:
-                depth = self._camera.get_depth()
-                if depth is not None:
-                    result["depth"] = depth
+                depth_data = self._depth_annotator.get_data()
+                if depth_data is not None and isinstance(depth_data, np.ndarray):
+                    result["depth"] = depth_data
             except Exception as e:
                 logger.warning(f"Failed to get depth image: {e}")
         
@@ -305,45 +262,64 @@ class CameraManager(SensorInterface):
     
     def set_position(self, position: List[float]) -> None:
         """设置相机位置"""
-        if self._camera is not None:
-            orientation = self._calculate_orientation()
-            self._camera.set_world_pose(position=np.array(position), orientation=orientation)
-            self.config.position = position
+        self.config.position = position
+        self._rebuild_camera()
     
     def set_target(self, target: List[float]) -> None:
         """设置相机目标点"""
         self._look_at(target)
     
-    def set_world(self, world) -> None:
-        """
-        设置world引用（用于后续添加到scene）
+    def _rebuild_camera(self) -> None:
+        """重建相机（当位置或目标改变时）"""
+        if not self._is_initialized:
+            return
+            
+        camera_pos = tuple(self.config.position)
+        target_pos = tuple(self.config.target)
         
-        Args:
-            world: Isaac Sim World实例
-        """
+        self._camera = rep.create.camera(
+            position=camera_pos,
+            look_at=target_pos,
+            fstop=1.8,
+            focal_length=24.0
+        )
+        
+        self._render_product = rep.create.render_product(
+            self._camera,
+            resolution=(self.config.width, self.config.height)
+        )
+        
+        self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        self._rgb_annotator.attach(self._render_product)
+        
+        if self._depth_annotator:
+            self._depth_annotator.attach(self._render_product)
+        
+        logger.debug(f"Camera rebuilt at {camera_pos}")
+    
+    def set_world(self, world) -> None:
+        """设置world引用"""
         self._world = world
     
     def cleanup(self) -> None:
         """清理相机资源"""
-        if self._camera is not None:
-            try:
-                # 如果相机在scene中，移除它
-                if self._world is not None and hasattr(self._world, 'scene'):
-                    self._world.scene.remove_object(self._camera.name)
-            except Exception as e:
-                logger.debug(f"Error removing camera from scene: {e}")
+        try:
+            if self._orchestrator_running:
+                rep.orchestrator.stop()
+                self._orchestrator_running = False
+        except Exception as e:
+            logger.debug(f"Error stopping orchestrator: {e}")
         
         self._camera = None
+        self._render_product = None
+        self._rgb_annotator = None
+        self._depth_annotator = None
         self._is_initialized = False
         logger.info(f"Camera cleaned up: {self.prim_path}")
 
 
 class MultiCameraManager:
-    """
-    多相机管理器
-    
-    管理多个视角的相机
-    """
+    """多相机管理器 - 管理多个视角的相机"""
     
     def __init__(self):
         self.cameras: Dict[str, CameraManager] = {}
@@ -362,11 +338,15 @@ class MultiCameraManager:
     
     def setup_all(self) -> None:
         """设置所有相机"""
+        rep.orchestrator.run()
         for camera in self.cameras.values():
             camera.setup()
     
     def capture_all(self) -> Dict[str, Dict[str, np.ndarray]]:
         """采集所有相机数据"""
+        for camera in self.cameras.values():
+            camera.orchestrator_step()
+        
         return {
             name: camera.capture()
             for name, camera in self.cameras.items()
@@ -395,7 +375,7 @@ OVERHEAD_CAMERA_CONFIG = CameraConfig(
 WRIST_CAMERA_CONFIG = CameraConfig(
     width=224,
     height=224,
-    position=[0.0, 0.0, 0.1],  # 相对于末端执行器
+    position=[0.0, 0.0, 0.1],
     target=[0.0, 0.0, 0.0],
     fov=90.0
 )

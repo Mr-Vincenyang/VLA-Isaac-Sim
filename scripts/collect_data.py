@@ -40,23 +40,22 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from PIL import Image
 
-# Isaac Sim 核心模块
-from omni.isaac.core import World
-from omni.isaac.core.objects import DynamicCuboid, GroundPlane
-from omni.isaac.core.utils.stage import add_reference_to_stage
-from omni.isaac.franka import Franka
-from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.core.prims import XFormPrim
+# Isaac Sim 核心模块 (Isaac Sim 5.x)
+from isaacsim.core.api import World
+from isaacsim.core.api.objects import DynamicCuboid, GroundPlane
+from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.robot.manipulators.examples.franka import Franka
+from isaacsim.core.utils.prims import create_prim
+from isaacsim.core.prims import SingleXFormPrim as XFormPrim
 from pxr import Gf
 
 # 相机模块
 try:
-    from omni.isaac.sensor import Camera
+    from isaacsim.sensors.camera import Camera
     CAMERA_AVAILABLE = True
 except ImportError:
     CAMERA_AVAILABLE = False
-    print("Warning: omni.isaac.sensor not available, using synthetic camera")
-
+    print("Warning: isaacsim.sensors.camera not available")
 import omni.replicator.core as rep
 
 logging.basicConfig(level=logging.INFO)

@@ -8,17 +8,29 @@
 3. 执行语言指令控制的抓取任务
 
 使用方法:
-    在Isaac Sim Python环境中运行:
     python demos/demo_vla_grasp.py --server http://your-server:8000
+    python demos/demo_vla_grasp.py --record output.mp4  # 录制视频
 """
 import argparse
 import time
 import logging
+import os
 from pathlib import Path
-import sys
+# Parse arguments early for headless mode
+import argparse
+parser = argparse.ArgumentParser(description="VLA Grasp Demo")
+parser.add_argument("--headless", action="store_true", help="Run in headless mode")
+args, _ = parser.parse_known_args()
+headless_mode = args.headless
+
+# Add project path
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# 创建输出目录
+output_dir = "/home/vincent/Desktop/code/VLA/output"
+os.makedirs(output_dir, exist_ok=True)
 
 # 首先启动Isaac Sim SimulationApp（必须在其他isaacsim模块之前）
 print("Starting Isaac Sim SimulationApp...")
@@ -27,20 +39,15 @@ try:
     
     # 性能优化配置
     simulation_config = {
-        "headless": False,
-        # 降低渲染分辨率以提高性能
+        "headless": True if headless_mode else False,
         "width": 1280,
         "height": 720,
-        # 禁用不必要的后处理
         "renderer": "RayTracedLighting",
-        # 禁用实时阴影以提高性能（可选）
         "enable_shadows": False,
     }
     
     simulation_app = SimulationApp(simulation_config)
     print("✓ SimulationApp started successfully")
-    print("  Note: If performance is slow, ensure CPU is not in powersave mode:")
-    print("  sudo cpupower frequency-set -g performance")
 except Exception as e:
     print(f"✗ Failed to start SimulationApp: {e}")
     print("Please run this script in Isaac Sim Python environment:")
@@ -48,6 +55,10 @@ except Exception as e:
     sys.exit(1)
 
 import numpy as np
+import cv2
+
+# Replicator for video recording
+import omni.replicator.core as rep
 
 from vla_platform.core.config import PlatformConfig, RemoteServerConfig
 from vla_platform.models.openvla_client import OpenVLAClient
@@ -66,7 +77,8 @@ class VLAGraspDemo:
     def __init__(
         self,
         server_url: str,
-        headless: bool = False
+        headless: bool = False,
+        record_path: str = None
     ):
         """
         初始化演示
@@ -74,9 +86,11 @@ class VLAGraspDemo:
         Args:
             server_url: 远程VLA服务器地址
             headless: 是否无头模式运行
+            record_path: 视频保存路径
         """
         self.server_url = server_url
         self.headless = headless
+        self.record_path = record_path
         
         # 解析服务器URL
         if "://" in server_url:
@@ -103,11 +117,15 @@ class VLAGraspDemo:
         self.vla_client = None
         self.motion_controller = None
         
+        # 视频录制
+        self.video_writer = None
+        self.rgb_annotator = None
+        
     def setup(self):
         """设置仿真环境和连接"""
         logger.info("Setting up VLA Grasp Demo...")
         
-        # 检查Isaac Sim（尝试导入SimulationApp验证）
+        # 检查Isaac Sim
         try:
             from isaacsim import SimulationApp
             logger.info("✓ Isaac Sim environment verified")
@@ -122,7 +140,7 @@ class VLAGraspDemo:
         self.sim_manager = SimulationManager(self.config.simulation)
         self.sim_manager.create_world()
         
-        # 2. 设置相机（在world创建后，传入world实例）
+        # 2. 设置相机
         logger.info("Setting up camera...")
         camera_config = CameraConfig(
             width=224,
@@ -133,7 +151,7 @@ class VLAGraspDemo:
         self.camera = CameraManager(
             prim_path="/World/Camera/overhead",
             config=camera_config,
-            world=self.sim_manager.world  # Fix: 传入world实例以便添加到scene
+            world=self.sim_manager.world
         )
         
         # 3. 创建Franka环境
@@ -149,15 +167,21 @@ class VLAGraspDemo:
         )
         self.env.setup()
         
-        # 4. 设置相机（需要在环境setup后）
+        # 4. 设置相机
         self.camera.setup()
         
-        # 5. 步进仿真几次以确保相机和物理完全初始化
+        # 5. 设置视频录制
+        if self.record_path:
+            self._setup_video_recording()
+        
+        # 6. 步进仿真几次
         logger.info("Initializing simulation...")
         for _ in range(5):
             self.sim_manager.step(render=True)
+            if self.record_path:
+                self._capture_frame()
         
-        # 6. 连接VLA服务器
+        # 7. 连接VLA服务器
         logger.info(f"Connecting to VLA server: {self.server_url}")
         self.vla_client = OpenVLAClient(
             self.config.remote,
@@ -169,37 +193,53 @@ class VLAGraspDemo:
         else:
             logger.info("Connected to VLA server!")
         
-        # 6. 创建运动控制器
+        # 8. 创建运动控制器
         self.motion_controller = MotionController(self.config.control)
         
-        # 7. 设置视口相机位置以便查看机器人
+        # 9. 设置视口相机
         self._setup_viewport_camera()
         
         logger.info("Setup complete!")
     
     def _setup_viewport_camera(self):
-        """设置视口相机以便查看机器人和场景"""
+        """设置视口相机"""
         try:
-            import numpy as np
             from isaacsim.core.utils.viewports import set_camera_view
-            
-            # 从斜上方查看机器人和桌子
-            eye_pos = (1.5, -1.0, 1.0)  # 相机位置 (tuple格式)
-            target_pos = (0.4, 0.0, 0.2)  # 看桌子中心
-            
-            # 使用Isaac Sim官方API设置视口相机
+            eye_pos = (1.5, -1.0, 1.0)
+            target_pos = (0.4, 0.0, 0.2)
             set_camera_view(eye_pos, target_pos, camera_prim_path="/OmniverseKit_Persp")
             logger.info(f"✓ Viewport camera set: eye={eye_pos}, target={target_pos}")
-                    
         except Exception as e:
             logger.warning(f"Could not set viewport camera: {e}")
-            # 备用：尝试直接导入
-            try:
-                from isaacsim.core.utils.viewports import set_camera_view
-                set_camera_view((1.5, -1.0, 1.0), (0.4, 0.0, 0.2))
-                logger.info("✓ Viewport camera set (fallback)")
-            except Exception as e2:
-                logger.warning(f"Fallback also failed: {e2}")
+    
+    def _setup_video_recording(self):
+        """设置视频录制"""
+        # 创建Replicator相机
+        camera_pos = (1.5, -1.0, 1.2)
+        look_at = (0.4, 0.0, 0.2)
+        
+        camera = rep.create.camera(position=camera_pos, look_at=look_at)
+        render_product = rep.create.render_product(camera, resolution=(1280, 720))
+        self.rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+        self.rgb_annotator.attach(render_product)
+        
+        # 初始化Replicator
+        rep.orchestrator.run()
+        
+        # 创建视频写入器
+        full_path = self.record_path if os.path.isabs(self.record_path) else os.path.join(output_dir, self.record_path)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.video_writer = cv2.VideoWriter(full_path, fourcc, 30, (1280, 720))
+        logger.info(f"✓ Recording video to: {full_path}")
+    
+    def _capture_frame(self):
+        """捕获当前帧并写入视频"""
+        if self.video_writer and self.rgb_annotator:
+            rep.orchestrator.step()
+            data = self.rgb_annotator.get_data()
+            if data is not None and len(data.shape) == 3 and data.shape[2] >= 3:
+                frame = cv2.cvtColor(data[:,:,:3].astype(np.uint8), cv2.COLOR_RGB2BGR)
+                self.video_writer.write(frame)
     
     def run_episode(
         self,
@@ -207,17 +247,7 @@ class VLAGraspDemo:
         max_steps: int = 100,
         render: bool = True
     ) -> bool:
-        """
-        运行一个抓取episode
-        
-        Args:
-            instruction: 语言指令
-            max_steps: 最大步数
-            render: 是否渲染
-            
-        Returns:
-            是否成功抓取
-        """
+        """运行一个抓取episode"""
         logger.info(f"Starting episode with instruction: '{instruction}'")
         
         # 重置环境
@@ -231,10 +261,8 @@ class VLAGraspDemo:
                     logger.debug(f"Step {step}: Action = {action.values}")
                 except Exception as e:
                     logger.error(f"VLA prediction failed: {e}")
-                    # 使用默认动作
                     action = self._get_default_action()
             else:
-                # 使用简单的启发式控制作为后备
                 action = self._get_heuristic_action(observation)
             
             # 2. 应用动作
@@ -243,15 +271,19 @@ class VLAGraspDemo:
             # 3. 步进仿真
             self.sim_manager.step(render=render)
             
-            # 4. 获取新的观测
+            # 4. 录制帧
+            if self.record_path:
+                self._capture_frame()
+            
+            # 5. 获取新的观测
             observation = self.env.get_observation()
             
-            # 5. 检查是否成功
+            # 6. 检查是否成功
             if self.env.check_grasp_success():
                 logger.info(f"Grasp successful at step {step}!")
                 return True
             
-            # 短暂延迟以便观察
+            # 短暂延迟
             if render:
                 time.sleep(0.01)
         
@@ -267,14 +299,9 @@ class VLAGraspDemo:
         )
     
     def _get_heuristic_action(self, observation):
-        """
-        启发式控制（当VLA不可用时）
-        
-        简单的向下移动并抓取
-        """
+        """启发式控制"""
         from vla_platform.core.base_interfaces import Action
         
-        # 获取物体位置
         object_positions = self.env.get_object_positions()
         if not object_positions:
             return self._get_default_action()
@@ -282,11 +309,9 @@ class VLAGraspDemo:
         target_pos = object_positions[0]
         ee_pos, _ = self.env.get_ee_pose()
         
-        # 计算增量
         delta = target_pos - ee_pos
-        delta = np.clip(delta, -0.02, 0.02)  # 限制步长
+        delta = np.clip(delta, -0.02, 0.02)
         
-        # 如果接近目标，尝试抓取
         gripper = 0.0 if np.linalg.norm(delta[:2]) < 0.02 else 1.0
         
         return Action(
@@ -315,6 +340,10 @@ class VLAGraspDemo:
     
     def cleanup(self):
         """清理资源"""
+        if self.video_writer:
+            self.video_writer.release()
+            logger.info(f"✓ Video saved: {self.record_path}")
+        
         if self.vla_client:
             self.vla_client.close()
         if self.sim_manager:
@@ -340,12 +369,19 @@ def main():
         action="store_true",
         help="Run in headless mode"
     )
+    parser.add_argument(
+        "--record",
+        type=str,
+        default=None,
+        help="Path to save video (e.g., output.mp4)"
+    )
     
     args = parser.parse_args()
     
     demo = VLAGraspDemo(
         server_url=args.server,
-        headless=args.headless
+        headless=args.headless,
+        record_path=args.record
     )
     
     try:
@@ -353,6 +389,8 @@ def main():
         demo.run_demo(num_episodes=args.episodes)
     finally:
         demo.cleanup()
+        if 'simulation_app' in globals():
+            simulation_app.close()
 
 
 if __name__ == "__main__":
