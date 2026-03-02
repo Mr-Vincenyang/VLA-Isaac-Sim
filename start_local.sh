@@ -36,7 +36,7 @@ NC='\033[0m' # No Color
 DEMO=""
 RECORD=false
 SERVER_URL=""
-EPISODES=3
+EPISODES=1
 HEADLESS=false
 ISAAC_PATH="${ISAAC_SIM_PATH:-$HOME/isaac-sim}"
 
@@ -138,10 +138,18 @@ echo ""
 
 # Build the command
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEMO_SCRIPT="$PROJECT_DIR/demos/demo_${DEMO}_control.py"
 
-if [ "$DEMO" = "grasp" ]; then
-    DEMO_SCRIPT="$PROJECT_DIR/demos/demo_vla_grasp.py"
+# Choose the right demo script
+if [ "$DEMO" = "motion" ]; then
+    DEMO_SCRIPT="$PROJECT_DIR/demos/demo_motion_control.py"
+elif [ "$DEMO" = "grasp" ]; then
+    # Use demo_vla_grasp_video.py for recording (simpler, more reliable)
+    # Use demo_vla_grasp.py for non-recording mode
+    if [ "$RECORD" = true ]; then
+        DEMO_SCRIPT="$PROJECT_DIR/demos/demo_vla_grasp_video_new.py"
+    else
+        DEMO_SCRIPT="$PROJECT_DIR/demos/demo_vla_grasp.py"
+    fi
 fi
 
 if [ ! -f "$DEMO_SCRIPT" ]; then
@@ -159,7 +167,12 @@ fi
 
 if [ "$RECORD" = true ]; then
     VIDEO_NAME="${DEMO}_demo_$(date +%Y%m%d_%H%M%S).mp4"
-    CMD="$CMD --record $VIDEO_NAME"
+    # demo_vla_grasp_video.py uses --output, demo_vla_grasp.py uses --record
+    if [[ "$DEMO_SCRIPT" == *"video"* ]]; then
+        CMD="$CMD --output $VIDEO_NAME"
+    else
+        CMD="$CMD --record $VIDEO_NAME"
+    fi
     echo -e "${BLUE}[INFO] Video will be saved to: output/$VIDEO_NAME${NC}"
 fi
 
@@ -167,7 +180,9 @@ if [ "$DEMO" = "grasp" ]; then
     CMD="$CMD --episodes $EPISODES"
 fi
 
-if [ "$HEADLESS" = true ]; then
+# Only add --headless for non-video demos
+# demo_vla_grasp_video.py already runs in headless mode
+if [ "$HEADLESS" = true ] && [[ "$DEMO_SCRIPT" != *"video"* ]]; then
     CMD="$CMD --headless"
 fi
 

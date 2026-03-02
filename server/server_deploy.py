@@ -108,15 +108,17 @@ def predict_action(
     image: Image.Image,
     instruction: str,
     temperature: float = 0.0,
+    unnorm_key: str = "bridge_orig",
     **kwargs
 ) -> np.ndarray:
     """
-    预测机器人动作
+    预测机器人动作 - 使用OpenVLA内置的predict_action方法
     
     Args:
         image: 输入图像
         instruction: 语言指令
         temperature: 采样温度
+        unnorm_key: 反归一化键（数据集特定）
         
     Returns:
         7维动作向量
@@ -145,62 +147,19 @@ def predict_action(
         else:
             inputs[key] = inputs[key].to(device)
     
-    # 推理
+    # 使用OpenVLA内置的predict_action方法进行推理
+    # 这会自动处理token->动作转换和反归一化
     with torch.no_grad():
-        # OpenVLA使用特定的生成参数
-        generate_kwargs = {
-            "max_new_tokens": 7,  # OpenVLA输出7个动作token
-            "do_sample": temperature > 0,
-            "pad_token_id": processor.tokenizer.pad_token_id,
-            "eos_token_id": processor.tokenizer.eos_token_id,
-        }
-        
-        if temperature > 0:
-            generate_kwargs["temperature"] = temperature
-        
-        outputs = model.generate(**inputs, **generate_kwargs)
+        action = model.predict_action(
+            **inputs,
+            unnorm_key=unnorm_key,
+            do_sample=temperature > 0
+        )
     
-    # 解码动作token
-    # OpenVLA输出的是动作token，需要转换为实际的动作值
-    action = decode_openvla_action(outputs, processor)
+    # 转换为numpy数组
+    action = action.cpu().numpy()
     
     return action
-
-
-def decode_openvla_action(outputs, processor) -> np.ndarray:
-    """
-    解码OpenVLA输出的动作
-    
-    OpenVLA输出7个token，每个token对应一个动作维度
-    需要将token ID转换为实际的动作值
-    
-    Args:
-        outputs: 模型生成的输出
-        processor: 处理器
-        
-    Returns:
-        7维动作向量
-    """
-    try:
-        # 获取最后7个token（动作token）
-        action_tokens = outputs[0, -7:].cpu().numpy()
-        
-        # OpenVLA使用256个离散化的动作bin
-        # 将token ID转换为实际动作值（范围通常是-1到1）
-        # 每个维度是独立的，token ID 0-255映射到-1.0到1.0
-        action = np.zeros(7)
-        for i in range(7):
-            # 将token ID映射到动作值
-            # token 0-255 -> -1.0到1.0
-            token_id = action_tokens[i]
-            action[i] = (token_id / 127.5) - 1.0
-        
-        return action
-        
-    except Exception as e:
-        logger.error(f"Failed to decode action: {e}")
-        # 返回零动作作为后备
-        return np.zeros(7)
 
 
 def parse_action_from_text(text: str) -> np.ndarray:
@@ -311,6 +270,7 @@ def predict():
         
         # 解码图像
         image = decode_image(image_data)
+        logger.info(f"=== DEBUG: Received image: size={image.size}, mode={image.mode}, format={image.format} ===")
         
         # 预测
         action = predict_action(

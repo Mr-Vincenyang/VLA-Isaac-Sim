@@ -57,7 +57,24 @@ class RESTClient:
     def _encode_image(self, image: np.ndarray) -> str:
         """将numpy图像编码为base64字符串"""
         pil_image = Image.fromarray(image.astype(np.uint8))
+        
+        # 先创建 buffer
+        from io import BytesIO
         buffer = BytesIO()
+        
+        # 调试：保存图像到本地
+        import os
+        debug_dir = "/home/vincent/Desktop/code/VLA/output/vla_debug"
+        os.makedirs(debug_dir, exist_ok=True)
+        if not hasattr(self, '_debug_count'):
+            self._debug_count = 0
+        self._debug_count += 1
+        if self._debug_count <= 5:  # 只保存前5张
+            debug_path = os.path.join(debug_dir, f"vla_image_{self._debug_count:03d}.png")
+            pil_image.save(debug_path)
+            print(f"[DEBUG] Saved VLA input image: {debug_path}")
+        
+        # 保存到 buffer 用于编码
         pil_image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
     
@@ -120,7 +137,9 @@ class RESTClient:
                 logger.debug(f"Inference latency: {latency*1000:.1f}ms")
                 
                 response.raise_for_status()
-                return self._decode_action(response.json())
+                response_json = response.json()
+                print(f"[DEBUG] VLA server response: {response_json}")
+                return self._decode_action(response_json)
                 
             except requests.RequestException as e:
                 logger.warning(f"Request attempt {attempt + 1} failed: {e}")
